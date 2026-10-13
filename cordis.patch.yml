@@ -1,0 +1,32 @@
+# 装载行（bundle patch，随包发布）。装好本包后由 profile 的 dsh.profile.bundles 自动应用。
+#
+# ⚠️ entry id 就是设置页的表单命名空间（harness 0.1.7 由 entry id 推导命名空间），
+#    改这个 id = 同时改掉设置页与已写进 settings.yaml 的覆盖项，请勿随意改名。
+#
+# 下面每一项都是「基线」；设置页里改过的值会写进 settings.yaml 覆盖这里，清空即回落基线。
+- insert:
+    - id: dsh-xwide-handoff
+      name: dsh-xwide-handoff
+      config:
+        enabled: true
+        commandName: handoff
+        # [2026-10-13 实测改 create] 本机 262K 窗口长期稳定路径：服务端直接建会话 + 命名 + 置顶
+        # （_06/_07 两份交接卡就是这条做的）。none = 由浏览器半用 GUI「新建对话」API 建会话，
+        # 实测当晚「命令跑了 / 卡片落盘 / 序号也占了，但侧栏没有新会话」→ 浏览器半未验通前不要用。
+        # 发布方要 none 的前提：本包已装成 profile 包（node_modules 有它）且自测过浏览器半去重/新鲜度闸门。
+        # ⚠️ 本文件就是唯一事实源：profile 用户层同 id 的 config **不能**可靠覆盖这里
+        # （实测同时存在两个装载实例时，命令由 bundle 那个实例接走 → 生效的是这里的 childMode）。
+        childMode: create
+        titleTemplate: "{base}_{seq}"   # 必须含 {seq}；{base}=源会话标题去序号
+        seqWidth: 2                     # 序号位数：01、02…
+        maxTitleChars: 64
+        recentUserMessages: 6           # 卡片「最近你的原话」带几条
+        # [2026-10-13] 本机 false：对近满 262K 上下文做本地压缩＝分钟级单卡，交接慢的根因；要压用官方 /compact。
+        compact: false
+        repinLimit: 3                   # 新会话被官方改名后最多重钉几次；0=关自愈
+        keepFork: false                 # 仅 childMode: fork 有意义
+        # A 半自动：到阈值自动把新会话备好（建好/命名/置顶/注入卡片），不替你切会话。
+        autoReady: true
+        readyPct: 0.7                   # inputTokens ÷ contextWindow ≥ 该比例时触发
+        readyCooldownMs: 600000         # 两次自动备好的最小间隔（10 分钟）
+        contextWindow: 262144           # 模型窗口（tokens）

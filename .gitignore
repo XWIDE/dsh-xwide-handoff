@@ -1,0 +1,12 @@
+node_modules/
+*.log
+*.bak
+*.bak-*
+.bak-*
+.DS_Store
+Thumbs.db
+dsh/
+settings.yaml
+handoff/
+.handoff-counter.json
+.env
