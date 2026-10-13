@@ -38,6 +38,8 @@
 
 4. 用法：在聊天输入框敲 `/handoff`，可带一句备注当「本次交接重点」：
 
+   ![指令菜单里的 handoff](img/handoff-command.png)
+
    ```
    /handoff 接着做发布：先剥机器专属项，再 push
    ```
