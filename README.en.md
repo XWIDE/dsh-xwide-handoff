@@ -2,6 +2,11 @@
 
 > A **handoff** plugin for **DeepSeek Harness (DSH)**: one `/handoff` turns a nearly-full chat into a **structured handoff card + a clean new session**, pinned to the top of the sidebar. It can also **prepare the next leg automatically** when the context runs hot.
 
+[![version](https://img.shields.io/github/v/release/XWIDE/dsh-xwide-handoff?include_prereleases&label=version)](https://github.com/XWIDE/dsh-xwide-handoff/releases/latest)
+[![status](https://img.shields.io/badge/status-beta-orange)](docs/INSTALL.md)
+[![platform](https://img.shields.io/badge/DSH-plugin-blue)](https://github.com/XWIDE/dsh-xwide-handoff)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 [中文（主页，先显示中文）](README.md) · **English** · [Install & Usage Guide](docs/INSTALL.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
 
 > **Status: v0.2.1 · beta.** The core flow (`/handoff` → card → new session → auto-numbered title → pin) runs daily on the author's machine; cross-machine install paths (notably `childMode: none`) are **not verified on a second box** yet. Two-step install, the config table and five troubleshooting cases live in the [Install & Usage Guide](docs/INSTALL.md).

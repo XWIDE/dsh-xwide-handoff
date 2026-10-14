@@ -2,6 +2,11 @@
 
 > 给 **DeepSeek Harness (DSH)** 用的交接插件：一条 `/handoff` 把「快聊满的会话」变成「一张结构化交接卡 + 一个干净的新会话」，并在侧栏自动置顶。上下文快满时还能**自动把下一棒备好**。
 
+[![version](https://img.shields.io/github/v/release/XWIDE/dsh-xwide-handoff?include_prereleases&label=%E7%89%88%E6%9C%AC)](https://github.com/XWIDE/dsh-xwide-handoff/releases/latest)
+[![status](https://img.shields.io/badge/%E7%8A%B6%E6%80%81-beta-orange)](docs/INSTALL.md)
+[![platform](https://img.shields.io/badge/DSH-%E6%8F%92%E4%BB%B6-blue)](https://github.com/XWIDE/dsh-xwide-handoff)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **中文（本页）** · [English](README.en.md) · [安装与使用指南](docs/INSTALL.md) · [更新日志](CHANGELOG.md) · [MIT License](LICENSE)
 
 > **状态：v0.2.1 · beta。** 核心流程（`/handoff` → 交接卡 → 新会话 → 自增命名 → 置顶）在作者机器上长期在用；跨机器安装路径（尤其 `childMode: none`）**尚未在第二台机器验证**。安装两步、配置项表、五条故障排查见 [安装与使用指南](docs/INSTALL.md)。
