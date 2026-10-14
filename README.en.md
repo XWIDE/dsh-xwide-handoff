@@ -4,7 +4,7 @@
 
 [中文（主页，先显示中文）](README.md) · **English** · [Install & Usage Guide](docs/INSTALL.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
 
-> **Status: v0.2.0 · beta.** The core flow (`/handoff` → card → new session → auto-numbered title → pin) runs daily on the author's machine; cross-machine install paths (notably `childMode: none`) are **not verified on a second box** yet. Two-step install, the config table and five troubleshooting cases live in the [Install & Usage Guide](docs/INSTALL.md).
+> **Status: v0.2.1 · beta.** The core flow (`/handoff` → card → new session → auto-numbered title → pin) runs daily on the author's machine; cross-machine install paths (notably `childMode: none`) are **not verified on a second box** yet. Two-step install, the config table and five troubleshooting cases live in the [Install & Usage Guide](docs/INSTALL.md).
 
 ---
 

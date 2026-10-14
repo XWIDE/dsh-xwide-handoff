@@ -4,7 +4,7 @@
 
 **中文（本页）** · [English](README.en.md) · [安装与使用指南](docs/INSTALL.md) · [更新日志](CHANGELOG.md) · [MIT License](LICENSE)
 
-> **状态：v0.2.0 · beta。** 核心流程（`/handoff` → 交接卡 → 新会话 → 自增命名 → 置顶）在作者机器上长期在用；跨机器安装路径（尤其 `childMode: none`）**尚未在第二台机器验证**。安装两步、配置项表、五条故障排查见 [安装与使用指南](docs/INSTALL.md)。
+> **状态：v0.2.1 · beta。** 核心流程（`/handoff` → 交接卡 → 新会话 → 自增命名 → 置顶）在作者机器上长期在用；跨机器安装路径（尤其 `childMode: none`）**尚未在第二台机器验证**。安装两步、配置项表、五条故障排查见 [安装与使用指南](docs/INSTALL.md)。
 
 ---
 

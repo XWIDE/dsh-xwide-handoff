@@ -1,6 +1,6 @@
 {
   "name": "dsh-xwide-handoff",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DSH 交接插件 / Handoff plugin：/handoff 生成结构化交接卡（自动序号命名 + 侧栏置顶 + 到阈值自动备好新会话）。Generates structured handoff cards with self-incrementing titles, sidebar pinning and threshold-based auto-prepare, so a near-full chat continues seamlessly in a fresh zero-context session. 双语 README。",
   "type": "module",
   "main": "./index.js",

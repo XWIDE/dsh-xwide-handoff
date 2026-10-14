@@ -2,6 +2,14 @@
 
 本文件记录 `dsh-xwide-handoff` 的可见变更。日期为本地时间。
 
+## 0.2.1 — 2026-10-14
+
+### 修复
+- **占位 `system/message` 用了规范上非法的 `turn/step`。** 候选列表原本是 `[[0, 0], [1, 1]]`，而 `[0,0]` 从规范上就必非法：`@deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js:252-256` 对 `system/message` 同时要求 `turn` 与 `step` 为正（正数检查在 `:226-227`）。关键在于**这条校验位于读取/恢复路径**（`assertV4RowAdmission`，同文件 `:1107-1114`），写侧的 `try/catch` 抓不到它 → 坏行照样落盘，等下次打开该会话时才抛 `format v4 system/message turn must be positive`，前端表现为「本轮运行失败」；交接几次就多几行。现在候选只保留合法值 `[[1, 1]]`。
+
+### 已知问题（本版未修）
+- **自愈重钉的名单是挂载时的一次性快照**：`index.js:807` 在 `attachSelfHeal` 里只 `readJson(NAMES_FILE)` 一次，而每次交接走 `saveName()`（`:149-155`）只写文件。于是**本进程内新建的交接会话不在 watcher 快照里**，被官方改名后不会重钉（`:814` 直接 return），直到重启 DSH。修法方向：watcher 现查文件，或把名单提成共享活对象由 `saveName` 同步更新。
+
 ## 0.2.0 — 2026-10-12
 
 ### 新增

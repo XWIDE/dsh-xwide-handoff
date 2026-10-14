@@ -585,7 +585,14 @@ async function runHandoff(ctx, config, invocation) {
     //                         source: { kind: "system-prompt" }, content: 数组 }
     let headSeeded = false;
     let headError = "";
-    for (const [turn, step] of [[0, 0], [1, 1]]) {
+    // [dsh-fix 2026-10-13] 原来这里是 [[0, 0], [1, 1]] —— [0,0] 必然失败，而且**会留下坏行**：
+    //   @deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js:226-228 `positive(value, subject)`
+    //   在 `sessionFormatCount(value, subject) === 0` 时抛 `format v4 ${subject} must be positive`；
+    //   :252-256 `assertV4SystemMessageFields(row)` 对 system/message 同时要求 turn 与 step ≥ 1。
+    //   child.append 的校验不在同步路径上（异常来不到这里的 catch），所以 [0,0] 那行照样落盘，
+    //   之后**读取/恢复该会话时**抛 `format v4 system/message turn must be positive` → 前端显示
+    //   「本轮运行失败」，重复交接几次就重复几行。故候选里只保留合法值。
+    for (const [turn, step] of [[1, 1]]) {
       try {
         child.append(
           "system/message",
