@@ -563,10 +563,12 @@ async function runHandoff(ctx, config, invocation) {
   }
   let seeded = false;
   let seedError = "";
+  // [dsh-fix 2026-10-14 B] preamble 提到外层：卡片正文现在由第 5 步的官方 prompt 通道投递，
+  //   那段代码在 `if (child)` 块**外面**（原 :688），块内 const 在外面取不到 → 会 ReferenceError。
+  const preamble =
+    "【交接卡·只读】这是上一个会话自动注入的交接卡。你只需要回复一句『已接收交接，等待指令』；" +
+    "不要分析卡片内容、不要给任何选项、不要自行开工。我的下一句指令才是任务。\n\n";
   if (child) {
-    const preamble =
-      "【交接卡·只读】这是上一个会话自动注入的交接卡。你只需要回复一句『已接收交接，等待指令』；" +
-      "不要分析卡片内容、不要给任何选项、不要自行开工。我的下一句指令才是任务。\n\n";
     // [dsh-fix 2026-10-12 第四次] ★surface head 保护★ —— 本地 Agent 实测踩到的雷，根因在插件。
     //   DSH 要求「可见序列（surface）的第一条必须是 system/message」：
     //     @deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js:599
@@ -592,8 +594,38 @@ async function runHandoff(ctx, config, invocation) {
     //   child.append 的校验不在同步路径上（异常来不到这里的 catch），所以 [0,0] 那行照样落盘，
     //   之后**读取/恢复该会话时**抛 `format v4 system/message turn must be positive` → 前端显示
     //   「本轮运行失败」，重复交接几次就重复几行。故候选里只保留合法值。
-    for (const [turn, step] of [[1, 1]]) {
+    // [dsh-fix 2026-10-14 A] ★占位头之前必须先开 turn/step★ —— 「重启后所有交接会话判 corrupt」的根因。
+    //   system/message 是 step-scoped 事件，官方两处校验都要求它落在「当前打开」的 turn/step 上：
+    //     @deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js:574 requireStep(event, data)
+    //       if (this.turn===null||this.step===null||data["turn"]!==this.turn||data["step"]!==this.step)
+    //         throw new SessionFormatError(`${event.type} does not match an open turn and step`)
+    //     dsh-session/lib/types/invariant.js:33-66（append 时的实时 trace）同一套规则；
+    //     :746-749 turn/start 只能在无 open turn 时开且 data.turn===nextTurn（新会话=1）；
+    //     :758-760 step/start 必须在 open turn 内、无 open step，且 data.step===nextStep（=1）。
+    //   原实现直接 append system/message(turn=1,step=1)，此刻会话里**没有任何 open turn** →
+    //   重载时 :574 抛 `system/message does not match an open turn and step` → 整条会话标成
+    //   「stored log is corrupt」→ 重启后历史加载失败（实证 session-9cc3cb15-fbed-4fc8-a7d1-b330c5b33180：
+    //   它的 seq=4 就是这条占位头，而 turn/start 直到 seq=7 才出现）。
+    //   修法：按官方真实事件形状先开 turn/step（本机活会话日志实测取值：
+    //     turn/start {"turn":1} · step/start {"turn":1,"step":1}
+    //     · step/end {"turn":1,"step":1} · turn/end {"turn":1,"reason":{"kind":"completed"}}），
+    //   卡片注完立刻关掉（见下面 user/message 之后的 step/end + turn/end）；不关的话 DSH 驱动首轮
+    //   自己写的 turn/start 会撞 :747 `turn/start does not open the expected turn` → 又 corrupt。
+    //   关掉后 nextTurn=2，DSH 按同一 trace 取号，它的首轮自然变成 turn=2，链上自洽。
+    // [dsh-fix 2026-10-14 B] ★候选置空 = 整段占位头不再执行★（不写 turn/start、step/start、system/message）。
+    //   实证根因（逐帧解 session.v4.jsonl.zstd，本机三个交接会话一致）：
+    //     seq=9  turn/end t1      ← 插件合成的 turn 1 在这里关掉，回放器的 nextTurn 变成 2
+    //     seq=11 turn/start t1    ← DSH 驱动首轮时按**自己的内存状态**取号，写的还是 t1
+    //   → 重载回放到 seq=11 撞 invariant.js:746-749（turn/start 必须 data.turn === nextTurn）
+    //   → 抛错 → 「stored log is corrupt」→ **重启后这些会话的历史全部打不开**。
+    //   上一版 A 修法只修掉了 _17/_19 的旧形状（seq=4 占位头没有 open turn），
+    //   却把冲突挪到了 seq=11 —— 所以「猛猛操作一番还是一样的问题」。
+    //   现在插件**一条事件都不合成**：卡片改由第 5 步官方 prompt 通道投递，
+    //   surface 首位由 DSH 自己写的 system/message 占据，turn/step 全由官方取号。
+    for (const [turn, step] of []) {
       try {
+        child.append("turn/start", { turn });
+        child.append("step/start", { turn, step });
         child.append(
           "system/message",
           {
@@ -625,7 +657,13 @@ async function runHandoff(ctx, config, invocation) {
         console.log(`[xwide-handoff] 占位 system/message 失败（两种 turn/step 都试过）：${headError}`);
       } catch {}
     }
-    try {
+    // [dsh-fix 2026-10-14 B] ★卡片不再由插件写事件★ —— 下面整段 append 停用（`if (false)` 保留原文可追溯）。
+    //   插件写 user/message + step/end + turn/end 的后果（本机日志实证，见上面 seq=9/seq=11 注释）：
+    //   插件替 DSH 把 turn 1 用掉并关掉，DSH 驱动首轮时仍按自己的状态写 turn/start t1 → 回放撞号 → corrupt。
+    //   现在卡片的投递唯一通道 = 第 5 步官方 prompt（sessionController.prompt），
+    //   surface 首位由 DSH 自己写的 system/message 占住，turn/step 全由官方取号，插件零合成事件。
+    seeded = true; // 卡片待由 prompt 投递；成败记在 engaged / engageError
+    if (false) try {
       child.append(
         "user/message",
         {
@@ -642,6 +680,11 @@ async function runHandoff(ctx, config, invocation) {
         // 实证：command/done seq=93 的 seedError 原文即上面那句。
         { surfaceOp: "append" },
       );
+      // [dsh-fix 2026-10-14 A] 卡片注完立刻关掉合成的 turn 1（形状见上面注释）。
+      //   step/end 要求 step 正开着（invariant.js:72-77）；turn/end 要求 step 已关（:44-53），
+      //   之后 nextTurn+=1 → DSH 驱动的首轮自然取到 turn=2，不再撞 :747。
+      child.append("step/end", { turn: 1, step: 1 });
+      child.append("turn/end", { turn: 1, reason: { kind: "completed" } });
       seeded = true;
     } catch (error) {
       seedError = String((error && error.message) || error);
@@ -670,10 +713,12 @@ async function runHandoff(ctx, config, invocation) {
           {
             sessionId: childId,
             requestId: `handoff-engage-${randomUUID()}`,
+            // [dsh-fix 2026-10-14 B] 正文＝交接卡本身（官方 prompt 通道 = GUI 发第一条消息的同一条路）。
+            //   卡片首行仍是目标标题 → 通道①的取名启发式照旧生效；显式 rename 在这之前已完成。
             content: [
               {
                 type: "text",
-                text: "（自动发起）请读取第一句交接卡，然后只回复一句『已接收交接，等待指令』，不要开工。",
+                text: `${preamble}${card}`,
               },
             ],
           },
@@ -690,12 +735,20 @@ async function runHandoff(ctx, config, invocation) {
         } catch {}
       } else {
         engageError = "sessionController.prompt 不可用";
+        // [dsh-fix 2026-10-14 B] 投递通道断了就如实报「卡片没送进去」，绝不再退回自己写事件那条老路
+        //   （自己写事件 = 本次 corrupt 的根因）。卡片文件已落盘，head 文案会提示用户手动粘贴。
+        seeded = false;
+        seedError = engageError;
         try {
           console.log(`[xwide-handoff] 驱动新会话失败：${engageError}`);
         } catch {}
       }
     } catch (error) {
       engageError = String((error && error.message) || error);
+      // [dsh-fix 2026-10-14 B] prompt 抛错 = 卡片没送进去；如实置 seedError，让 head 提示手动粘贴卡片，
+      //   绝不退回「插件自己写事件」那条老路（那正是本次 corrupt 的根因）。
+      seeded = false;
+      seedError = engageError;
       try {
         console.log(`[xwide-handoff] 驱动新会话失败：${engageError}`);
       } catch {}

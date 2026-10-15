@@ -2,6 +2,26 @@
 
 本文件记录 `dsh-xwide-handoff` 的可见变更。日期为本地时间。
 
+## 0.2.2 — 2026-10-15
+
+### 修复
+- **★「重启机器后，所有交接会话都判 `stored log is corrupt`、历史打不开」的根因修掉了。** 逐帧解 `session.v4.jsonl.zstd`（本机三个交接会话表现一致）得到的实证链：
+  - `seq=9 turn/end t1` ← 插件合成的 turn 1 在这里关掉，重载回放器的 `nextTurn` 变成 **2**；
+  - `seq=11 turn/start t1` ← DSH 驱动首轮时按**自己的内存状态**取号，写的还是 **t1**；
+  - → 重载回放到 `seq=11` 撞 `@deepseek-ai/dsh-session/lib/types/invariant.js:746-749`（`turn/start` 必须 `data.turn === nextTurn`）→ 抛错 → 整条会话标成 `stored log is corrupt`。
+- **修法＝插件零合成事件**（`index.js`）：
+  - 占位头候选置空 `for (const [turn, step] of [])`（`index.js:625`）→ 不再写 `turn/start` / `step/start` / `system/message`；
+  - 卡片注入段整段停用（`if (false)` 保留原文可追溯，`index.js:666`），插件不再写 `user/message` / `step/end` / `turn/end`；
+  - 卡片的**唯一投递通道**＝第 5 步官方 prompt（`sessionController.prompt()`）；surface 首位由 DSH 自己写的 `system/message` 占住，turn/step 全由官方取号。
+- **不再偷偷退回老路**：官方 prompt 通道抛错＝卡片没送进去，如实置 `seedError` 并让 head 提示「手动粘贴卡片」（`index.js:738`、`:748`），绝不回退到「插件自己写事件」那条会写坏日志的路。
+
+### 说明（本版为什么必须发）
+- 0.2.1 只修掉了旧形状（`seq=4` 的占位头没有 open turn，撞 `@deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js:574 requireStep`），把冲突挪到了 `seq=11` —— 所以当时表现为「猛猛操作一番，问题一模一样」。本版把插件写事件这条路径整条关掉，才是根治。
+- 本机已安装副本此前只标到 `0.2.0`（代码已含 A/B 修复、版本号没跟上），本次一并同步到 `0.2.2`。
+
+### 已知问题（本版未修）
+- 沿用 0.2.1：**自愈重钉的名单是挂载时的一次性快照**（`index.js:807` 只 `readJson(NAMES_FILE)` 一次，本进程内新建的交接会话不在快照里，被官方改名后不会重钉，直到重启 DSH）。
+
 ## 0.2.1 — 2026-10-14
 
 ### 修复
