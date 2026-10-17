@@ -20,7 +20,8 @@
     "README.md",
     "README.zh-CN.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "docs"
   ],
   "peerDependencies": {
     "@deepseek-ai/dsh-app-plugin": ">=0.1.7",
