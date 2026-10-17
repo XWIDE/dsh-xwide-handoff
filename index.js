@@ -133,17 +133,49 @@ function writeJson(file, obj) {
 }
 
 /**
- * 取本次序号并**立刻占号写回**（按工作目录分桶，跨交接单调递增）。
+ * 取本次序号并**立刻占号写回**（按传入的分桶键，组内单调递增）。
  * 关键：序号不来自源会话标题尾号 —— 源会话每次都是新开的，尾号推算会永远算回 01。
  */
-function claimSeq(counterFile, cwdKey) {
+function claimSeq(counterFile, bucketKey) {
   const store = readJson(counterFile);
   const buckets = store.buckets && typeof store.buckets === "object" ? store.buckets : {};
-  const used = Array.isArray(buckets[cwdKey]) ? buckets[cwdKey] : [];
+  const used = Array.isArray(buckets[bucketKey]) ? buckets[bucketKey] : [];
   const seq = nextSeqFrom(used, 99);
-  buckets[cwdKey] = [...used, seq].slice(-40);
+  buckets[bucketKey] = [...used, seq].slice(-40);
   writeJson(counterFile, { version: 1, updatedAt: new Date().toISOString(), buckets });
   return seq;
+}
+
+/**
+ * [dsh-fix 2026-10-17] 序号按**项目分组**分桶，不再按工作目录。
+ *   毛病：project-groups 把所有项目的工作目录都落在同一个基工作区（注入的 project-context 原话：
+ *   "all projects' workspace directories fall into a single base workspace"），
+ *   于是所有项目共用 cwd 这一个桶 → 新项目的**第一张**交接卡直接叫 `_32`。
+ *   交接卡是项目内的叙事，序号必须各从 `_01` 起。
+ *   取数通道与下方「归组」块同源：ctx.get("projectController").baseline()
+ *     → assignments[sessionId]=projectId（dsh-project-groups src/index.ts:933）。
+ *   未分组 / 服务不可用 / 任何异常 → 退回 cwd 键＝旧行为，未分组会话继续用老桶递增，不断档。
+ */
+async function resolveBucketKey(ctx, sourceId, cwdKey) {
+  try {
+    if (!sourceId || sourceId === "(unknown)") return cwdKey;
+    const pc = typeof ctx.get === "function" ? ctx.get("projectController") : void 0;
+    if (!pc || typeof pc.baseline !== "function") return cwdKey;
+    const base = await pc.baseline();
+    const projectId = base && base.assignments ? base.assignments[sourceId] : void 0;
+    if (typeof projectId !== "string" || projectId === "") return cwdKey;
+    let name = "";
+    const list = base.projects;
+    const hit = Array.isArray(list)
+      ? list.find((p) => p && (p.id === projectId || p.projectId === projectId))
+      : list && typeof list === "object"
+        ? list[projectId]
+        : void 0;
+    if (hit) name = sanitizeSegment(String(hit.name || hit.title || ""), 24);
+    return `proj:${projectId}${name ? "#" + name : ""}`;
+  } catch {
+    return cwdKey;
+  }
 }
 
 function saveName(childId, title) {
@@ -502,8 +534,9 @@ async function runHandoff(ctx, config, invocation) {
     }
   }
 
-  // 3) 命名：序号来自落盘计数器（单调递增），基名取最新标题/目录名
-  const seq = claimSeq(config.counterFile, cwdKey);
+  // 3) 命名：序号来自落盘计数器（**按项目分组分桶**，组内单调递增），基名取最新标题/目录名
+  const bucketKey = await resolveBucketKey(ctx, sourceId, cwdKey);
+  const seq = claimSeq(config.counterFile, bucketKey);
   const base = resolveBase({ titles: titleHistory(session), cwd: cwdKey });
   const title = renderTitle({
     template: config.template,
@@ -831,7 +864,7 @@ async function runHandoff(ctx, config, invocation) {
           : `已交接：新会话「${title}」（id ${childId}）；自动注入失败（${seedError}），请把下面卡片作为第一句粘贴`;
   const extras = [];
   if (child) extras.push(`新会话类型：${createdEmpty ? "全新空会话（上下文清零）" : "fork（继承全部历史）"}${createNote ? `；${createNote}` : ""}`);
-  extras.push(`序号：第 ${seq} 次交接（计数器落盘，跨交接递增）`);
+  extras.push(`序号：第 ${seq} 次交接（计数器落盘，按${bucketKey === cwdKey ? "工作目录（未分组）" : "项目分组"}各自递增）`);
   if (renamedBy) extras.push(`命名通道：${renamedBy}`);
   else if (renameError) extras.push(`命名失败：${renameError} —— 请手动把标题设为「${title}」`);
   extras.push(fileError ? `卡片写文件失败：${fileError}` : `卡片文件：${file}`);

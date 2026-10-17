@@ -2,6 +2,17 @@
 
 本文件记录 `dsh-xwide-handoff` 的可见变更。日期为本地时间。
 
+## 0.2.3 — 2026-10-17
+
+### 修复
+- **★交接卡序号不再全局共用一个计数器，改为按项目分组各自计数。** 现象：新开项目的**第一张**交接卡标题直接叫 `_32`（本机实测 `Strata0.145机器模型升级提升评估_32`）。根因：序号的桶键是**工作目录**（调用处原为 `claimSeq(config.counterFile, cwdKey)`），而 `dsh-project-groups` 把所有项目的工作目录都落在同一个基工作区（注入的 project-context 原话 "all projects' workspace directories fall into a single base workspace"）→ 所有项目共用 `"...\default-workspace"` 这一个桶，`~\.dsh\xwide-handoff-counter.json` 里该桶已计到 32。
+- **修法**：新增 `resolveBucketKey(ctx, sourceId, cwdKey)`（`index.js:159`），取数通道与下方「归入项目分组」块同源（`ctx.get("projectController").baseline()` → `assignments[sessionId] = projectId`）。已分组 → 桶键 `proj:<projectId>#<项目名>`，**新项目首张卡从 `_01` 起**；未分组 / 服务不可用 / 任何异常 → 退回 cwd 键＝旧行为，老会话不断号。`/handoff` 回执同步标明分桶依据（`index.js:867`）。
+
+### 判定器（三层全绿）
+- 语法：`node --check index.js` 通过（经 `dsh_safe_write` 校验后落盘，每步自动 `.bak-*`）。
+- 装载：`dsh_plugin_check(dir=插件目录)` → `OK dsh-xwide-handoff 装载自检通过`。
+- 行为：`_annot_extract\bucket_seq_sim.mjs`（照抄被测函数 + 假 ctx，11 条断言）→ `RESULT: ALL PASS`：新项目首号 1、二次 2；未分组续老桶到 33；服务不可用 / `baseline()` 抛错 / `sourceId` 缺失一律退回 cwd；两个项目各自独立计数。
+
 ## 0.2.2 — 2026-10-15
 
 ### 修复
