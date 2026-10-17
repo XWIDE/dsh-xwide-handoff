@@ -1,0 +1,52 @@
+name: Publish to npm
+
+# GitHub OIDC 版 npm Trusted Publishing：不需要 NPM_TOKEN，也不受 npm「发新包必须开 2FA」政策拦。
+# 首次运行会在 npm 侧生成一个「pending publisher」：包主在 npmjs.com 批准后重跑本 workflow 即可发布。
+# 同一套流程已用于 dsh-xwide-annotation（见 本机工具箱.md §6.11）。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 24：自带 npm 11.x。npm < 11.5.1 走 OIDC 发布会报误导性的 E404。
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+
+      - name: Require npm >= 11.5.1 (trusted publishing floor)
+        run: |
+          V=$(npm -v)
+          echo "npm $V"
+          if [ "$(printf '%s\n' 11.5.1 "$V" | sort -V | head -n1)" != "11.5.1" ]; then
+            echo "npm $V is below 11.5.1 -> trusted publishing would fail with a misleading E404"
+            exit 1
+          fi
+
+      - name: Syntax gate
+        run: |
+          node --check index.js
+          node --check naming.js
+          node --check client.js
+
+      - name: What goes into the tarball
+        run: npm pack --dry-run
+
+      - name: Publish (trusted publishing, no token)
+        run: npm publish --provenance --access public
