@@ -1,0 +1,94 @@
+{
+  "name": "dsh-xwide-handoff",
+  "version": "0.2.0",
+  "description": "DSH 交接插件 / Handoff plugin：/handoff 生成结构化交接卡（自动序号命名 + 侧栏置顶 + 到阈值自动备好新会话）。Generates structured handoff cards with self-incrementing titles, sidebar pinning and threshold-based auto-prepare, so a near-full chat continues seamlessly in a fresh zero-context session. 双语 README。",
+  "type": "module",
+  "main": "./index.js",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./naming": "./naming.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "naming.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-app-plugin": ">=0.1.7",
+    "@deepseek-ai/dsh-api-session-controller": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-connection": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-store": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-locale": ">=0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.2.0-rc.1",
+    "@deepseek-ai/schemastery": ">=3.18.4"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-api-session-controller": { "optional": true },
+    "@deepseek-ai/dsh-client-connection": { "optional": true },
+    "@deepseek-ai/dsh-client-store": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-settings": { "optional": true },
+    "@deepseek-ai/dsh-client-locale": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-primitives": { "optional": true },
+    "@deepseek-ai/schemastery": { "optional": true }
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-app-plugin": "^0.1.7"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "id": "dsh-xwide-handoff",
+    "title": "交接插件 Handoff (X-WIDE)",
+    "description": {
+      "en": "Structured /handoff cards: self-incrementing session titles, sidebar pinning, threshold auto-prepare — continue a near-full chat in a fresh visible session.",
+      "zh": "结构化 /handoff 交接卡：自增序号标题、侧栏置顶、到阈值自动备好新会话，近满上下文无缝续聊。"
+    },
+    "shortDescription": {
+      "en": "Handoff cards + auto-numbered new chats",
+      "zh": "交接卡 + 自编号新会话"
+    },
+    "author": "XWIDE",
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/XWIDE/dsh-xwide-handoff.git"
+    },
+    "homepage": "https://github.com/XWIDE/dsh-xwide-handoff#readme",
+    "bugs": {
+      "url": "https://github.com/XWIDE/dsh-xwide-handoff/issues"
+    },
+    "keywords": ["dsh-plugin", "handoff", "context", "session"],
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-store",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/cordis"
+      ]
+    },
+    "seams": ["fs"]
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check naming.js && node --check client.js"
+  }
+}
