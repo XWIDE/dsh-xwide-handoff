@@ -66,6 +66,16 @@ pnpm add dsh-xwide-handoff
 
 > ⚠️ 判占用**必须**用 `inputTokens`。`usage.totalTokens` 是累计消耗（见过 20 万），拿它判会 100% 误触。
 
+## B 全自动交接（`autoHandoff`）
+
+勾上这个开关，到阈值就**替你敲一次 `/handoff`**：建新会话 → 按模板命名 → 置顶 → 写交接卡 → 驱动它跑完首轮。和手动执行完全一样，区别只是不用自己守着。
+
+- **阈值 `autoHandoffPct`：可填 50–95，默认 90**（超出范围自动夹到 50 或 95；填 `90` 或 `0.9` 都认）。
+- 判据与 A 相同：`inputTokens ÷ contextWindow`。
+- **A 与 B 的区别**：A（`autoReady`）只把新会话**备好**，卡片等你敲 `/handoff`；B 连卡片和首轮驱动一起做完。两个开关可以同时开，B 优先生效。
+- 保险丝：同一会话只自动交接一次，和 A 共用全局冷却（默认 10 分钟），开关默认**关**。
+- 设置页路径：设置 → 交接插件 → 「自动交接（到点自动执行 /handoff）」+「自动交接阈值 (%)」。
+
 ## 配置
 
 ```yaml
@@ -82,6 +92,8 @@ pnpm add dsh-xwide-handoff
     repinLimit: 3                 # 自愈重钉次数上限
     autoReady: false              # A 半自动总开关
     readyPct: 0.7                 # 触发阈值（占上下文窗口比例）
+    autoHandoff: false            # B 全自动：到阈值直接执行 /handoff
+    autoHandoffPct: 0.9           # 全自动阈值，50–95，默认 90
     readyCooldownMs: 600000       # 冷却
     contextWindow: 262144         # 上下文窗口（判占用用）
     cardSections:                 # 卡片栏目开关

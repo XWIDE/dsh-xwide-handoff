@@ -76,6 +76,16 @@ usage = latest assistant/message .usage.inputTokens / contextWindow
 
 > ⚠️ Use `inputTokens`, **not** `usage.totalTokens`. The latter is cumulative spend (we have seen 205k) and will trigger on everything.
 
+## Full auto handoff (`autoHandoff`)
+
+Turn this on and the plugin **types `/handoff` for you** once the threshold is reached: create the new session → name it from the template → pin it → write the card → drive its first turn. Exactly what you would do by hand, minus the waiting.
+
+- **Threshold `autoHandoffPct`: 50–95, default 90** (out-of-range values are clamped to 50 or 95; both `90` and `0.9` are accepted).
+- Same measure as auto-ready: `inputTokens / contextWindow`.
+- **A vs B**: `autoReady` only *prepares* the new session and leaves the card to you; `autoHandoff` also writes the card and drives the first round. Both switches may be on — auto-handoff wins.
+- Fuses: one auto-handoff per session, shared global cooldown (10 min default), switch defaults to **off**.
+- Where: Settings → Handoff → "Auto handoff (run /handoff at threshold)" + "Auto handoff threshold (%)".
+
 ## Configuration
 
 ```yaml
@@ -92,6 +102,8 @@ usage = latest assistant/message .usage.inputTokens / contextWindow
     repinLimit: 3                 # self-heal re-pin attempts
     autoReady: false              # auto-ready master switch
     readyPct: 0.7
+    autoHandoff: false            # full auto: run /handoff at threshold
+    autoHandoffPct: 0.9           # 50–95, default 90
     readyCooldownMs: 600000
     contextWindow: 262144         # model window (defaults to the author's local model — set your own)
     cardSections: { guide: true, files: true, usage: true }
