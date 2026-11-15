@@ -2,6 +2,26 @@
 
 本文件记录 `dsh-xwide-handoff` 的可见变更。日期为本地时间。
 
+## 0.2.5 — 2026-11-15
+
+### 修复
+- **★设置页所有文本类设置项（含「自动交接阈值」）根本没有输入框、不能填值。** 现象（用户报障）：设置页「自动交接阈值 (%)」那一行只有标签和说明文字，值的位置是空的，填不进 90。根因：`client.js:137` 写成了 `h("DraftInput", {...})` —— 组件名是**字符串**，`React.createElement("DraftInput")` 只会建一个未知的自定义 DOM 标签（空元素、无报错），真正的 `DraftInput` 函数（`client.js:215`）从未被调用。修法：改成 `h(DraftInput, {...})`。影响面＝同一 `textRow` 渲染的所有项：命令名、自动交接阈值、触发阈值、上下文窗口、全局冷却、卡片带最近原话条数、序号位数、标题最长字符、自愈重钉上限、计数器文件路径。
+- **脚注里的发布页 / B站地址改成可点链接**：`<a target="_blank">` → 桌面端 `main.js:20278` 的 `setWindowOpenHandler` 会把 http/https 交给系统浏览器打开；邮箱是 `mailto:`，该处理器只放行 http/https，做成链接会点了没反应，故保持纯文本。
+
+## 0.2.4 — 2026-11-15
+
+### 修复
+- **★交接序号改为按「会话线（标题基名）」分桶，每条线各自 `_01` 起。** 现象（用户报障）：`comfyui-preset-switch-plus升级Ultra` 那条线用到 `_27`，随后完全无关的新会话「对话标记插件推荐」第一次交接直接被写成 `_28`。根因：0.2.3 把桶键设成「项目分组」，而这两条会话都归在「未分组」→ 共用同一个桶，序号跨会话串号。修法：`index.js:537-546` 先算 `base`，再 `bucketKey = "title:" + sanitizeSegment(base, 40)`（基名取不到时才退回旧桶，避免断档）；回执文案改为「本会话线第 N 次交接」。
+- 已存在的 `_18/_25/_26/_27` 一律不改名，新逻辑只影响之后的交接。
+
+### 新增
+- **设置页「自动交接」勾选 + 自动交接阈值（可配置输入框，默认 90，允许 50–95，越界自动夹到边界）**：勾上后到阈值自动执行一次 `/handoff`（建新会话+命名+置顶+填卡+驱动首轮），等同用户手打。实现：`index.js` 的 `cfg()` 新增 `autoHandoff`/`autoHandoffPct`（`CONFIG_DEFAULTS` 同步，阈值夹在 `[0.5, 0.95]`）；`attachAutoReady` 在 `turn/end` 判据里先走全自动分支（每会话一次、受全局冷却约束），半自动 `autoReady` 保留为第二分支；`autoReadyOnce(..., mode)` 按模式区分「自动交接 / 自动备好」两种首句与日志。
+- **设置页脚注（开发信息）**：`dsh-xwide-handoff v0.2.4 · 2026-11-15` / 支持的 DeepSeek Harness `≥ 0.1.7（本机实测 0.2.2-rc.3）` / 作者 X-WIDE · B站 374064919 · xiupk@sina.com.cn / 发布页 github.com/XWIDE/dsh-xwide-handoff。样式照 `dsh-xwide-annotation` 的分区脚注（`client.js` 的 `footerStyle`）。
+
+### 判定器
+- 语法：`F:\deepseekharness\DeepSeek Harness.exe --check index.js` / `--check client.js` → **exit 0**（两份 SHA1 与已安装副本一致）。
+- 装载/行为：**未验** —— 改插件需重启 DSH 才装载。重启后要确认三件事：设置页出现「自动交接」勾选与阈值 90、底部脚注四行；真机跑到 90% 时是否自动产生新会话。
+
 ## 0.2.3 — 2026-10-17
 
 ### 修复

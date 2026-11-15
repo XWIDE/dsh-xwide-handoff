@@ -82,6 +82,17 @@ function cfg(config) {
     // 默认**关**（autoReady 必须显式 true 才开）；阈值默认 70%；冷却默认 10 分钟。
     autoReady: c.autoReady === true,
     readyPct: Number(c.readyPct) > 0 && Number(c.readyPct) < 1 ? Number(c.readyPct) : 0.7,
+    // [dsh-feat 2026-11-15] 全自动交接（用户点名要）：到阈值直接**执行一次 /handoff**
+    //   （建新会话 + 命名 + 置顶 + 填卡 + 驱动首轮），不再只是"备好"等用户去点。
+    //   与 autoReady 的区别：autoReady 提前备好但不动；autoHandoff 到点就真交接一次。
+    //   默认关；阈值默认 90%（用户原话"自动交接90%"）。
+    autoHandoff: c.autoHandoff === true,
+    // 阈值允许 50%–95%（用户 2026-11-15 定：可配置输入框，默认 90），越界一律夹回边界。
+    autoHandoffPct: (() => {
+      const p = Number(c.autoHandoffPct);
+      if (!Number.isFinite(p) || p <= 0 || p >= 1) return 0.9;
+      return Math.min(0.95, Math.max(0.5, p));
+    })(),
     readyCooldownMs: Number(c.readyCooldownMs) >= 0 ? Number(c.readyCooldownMs) : 600000,
     contextWindow: Number(c.contextWindow) > 1000 ? Number(c.contextWindow) : 262144,
     // [dsh-fix 2026-10-12] 卡片栏目开关（为开源分发准备）：用户可以关掉不想要的段。
@@ -534,10 +545,15 @@ async function runHandoff(ctx, config, invocation) {
     }
   }
 
-  // 3) 命名：序号来自落盘计数器（**按项目分组分桶**，组内单调递增），基名取最新标题/目录名
-  const bucketKey = await resolveBucketKey(ctx, sourceId, cwdKey);
-  const seq = claimSeq(config.counterFile, bucketKey);
+  // 3) 命名：序号来自落盘计数器（**按会话线＝标题基名分桶**，同一条线内单调递增），基名取最新标题/目录名
+  //    [dsh-fix 2026-11-15] 用户报障：「对话标记插件推荐」第一次交接被写成 `_28`（接着 comfyui 那条线的 `_27`）。
+  //    根因＝分桶键取的是"项目分组/工作目录"，同一分组下所有会话共用一个桶 → 序号跨会话串号。
+  //    改为按基名分桶：每条会话线各自 `_01` 起；基名为空（取不到标题）时才退回旧桶，避免断档。
   const base = resolveBase({ titles: titleHistory(session), cwd: cwdKey });
+  const legacyBucketKey = await resolveBucketKey(ctx, sourceId, cwdKey);
+  const lineageKey = sanitizeSegment(String(base || ""), 40);
+  const bucketKey = lineageKey ? `title:${lineageKey}` : legacyBucketKey;
+  const seq = claimSeq(config.counterFile, bucketKey);
   const title = renderTitle({
     template: config.template,
     base,
@@ -864,7 +880,7 @@ async function runHandoff(ctx, config, invocation) {
           : `已交接：新会话「${title}」（id ${childId}）；自动注入失败（${seedError}），请把下面卡片作为第一句粘贴`;
   const extras = [];
   if (child) extras.push(`新会话类型：${createdEmpty ? "全新空会话（上下文清零）" : "fork（继承全部历史）"}${createNote ? `；${createNote}` : ""}`);
-  extras.push(`序号：第 ${seq} 次交接（计数器落盘，按${bucketKey === cwdKey ? "工作目录（未分组）" : "项目分组"}各自递增）`);
+  extras.push(`序号：本会话线第 ${seq} 次交接（按标题基名分桶落盘，每条线各自 _01 起）`);
   if (renamedBy) extras.push(`命名通道：${renamedBy}`);
   else if (renameError) extras.push(`命名失败：${renameError} —— 请手动把标题设为「${title}」`);
   extras.push(fileError ? `卡片写文件失败：${fileError}` : `卡片文件：${file}`);
@@ -932,13 +948,19 @@ function attachSelfHeal(ctx, config) {
 //   保险：按会话只备一次（armed）、全局冷却、总开关 config.autoReady（默认关）。
 
 function attachAutoReady(ctx, config) {
-  if (!config.autoReady) return;
+  if (!config.autoReady && !config.autoHandoff) return;
   const used = new Map(); // sid -> 最近一次 inputTokens
   const armed = new Set(); // 已备好过的会话
+  const handed = new Set(); // 已自动交接过的会话
   let lastAt = 0;
-  console.log(
-    `[xwide-handoff] 自动备好已开：阈值 ${(config.readyPct * 100).toFixed(0)}%／窗口 ${config.contextWindow}／冷却 ${Math.round(config.readyCooldownMs / 60000)} 分钟`,
-  );
+  if (config.autoReady)
+    console.log(
+      `[xwide-handoff] 自动备好已开：阈值 ${(config.readyPct * 100).toFixed(0)}%／窗口 ${config.contextWindow}／冷却 ${Math.round(config.readyCooldownMs / 60000)} 分钟`,
+    );
+  if (config.autoHandoff)
+    console.log(
+      `[xwide-handoff] 自动交接已开：阈值 ${(config.autoHandoffPct * 100).toFixed(0)}% → 到点直接执行 /${config.commandName}（窗口 ${config.contextWindow}／冷却 ${Math.round(config.readyCooldownMs / 60000)} 分钟）`,
+    );
 
   ctx.on("session/event", (session, event) => {
     try {
@@ -950,12 +972,30 @@ function attachAutoReady(ctx, config) {
         return;
       }
       if (event.type !== "turn/end") return;
-      if (armed.has(sid)) return;
       const n = used.get(sid);
       if (!Number.isFinite(n)) return;
       const ratio = n / config.contextWindow;
-      if (ratio < config.readyPct) return;
       const now = Date.now();
+      // ① 全自动交接（勾了「自动交接」）：到阈值直接跑一次 handoff，等同用户手打 /handoff
+      if (config.autoHandoff && !handed.has(sid) && ratio >= config.autoHandoffPct) {
+        if (now - lastAt < config.readyCooldownMs) {
+          console.log(`[xwide-handoff] 自动交接：${sid} 已达 ${(ratio * 100).toFixed(1)}%，但冷却中，跳过`);
+          return;
+        }
+        handed.add(sid);
+        lastAt = now;
+        console.log(
+          `[xwide-handoff] 自动交接触发：上下文 ${(ratio * 100).toFixed(1)}%（${n}/${config.contextWindow}）→ 执行 /${config.commandName}：${sid}`,
+        );
+        autoReadyOnce(ctx, config, sid, n, "handoff").catch((error) => {
+          console.log(`[xwide-handoff] 自动交接失败：${String((error && error.message) || error)}`);
+        });
+        return;
+      }
+      // ② 半自动备好（autoReady）：提前把新会话建好，但不替用户切
+      if (!config.autoReady) return;
+      if (armed.has(sid)) return;
+      if (ratio < config.readyPct) return;
       if (now - lastAt < config.readyCooldownMs) {
         console.log(`[xwide-handoff] 自动备好：${sid} 已达 ${(ratio * 100).toFixed(1)}%，但冷却中，跳过`);
         return;
@@ -974,22 +1014,26 @@ function attachAutoReady(ctx, config) {
   });
 }
 
-async function autoReadyOnce(ctx, config, sid, tokens) {
+async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
+  const tag = mode === "handoff" ? "自动交接" : "自动备好";
   const ctl = typeof ctx.get === "function" ? ctx.get("sessionController") : void 0;
   if (!ctl || typeof ctl.resolveAgent !== "function") {
-    console.log("[xwide-handoff] 自动备好跳过：sessionController 服务不可用");
+    console.log(`[xwide-handoff] ${tag}跳过：sessionController 服务不可用`);
     return;
   }
   const agent = await ctl.resolveAgent(sid);
   const session = agent && agent.session;
   if (!session) {
-    console.log("[xwide-handoff] 自动备好跳过：拿不到会话对象");
+    console.log(`[xwide-handoff] ${tag}跳过：拿不到会话对象`);
     return;
   }
   const pct = ((tokens / config.contextWindow) * 100).toFixed(0);
+  const head = mode === "handoff"
+    ? `（自动交接：源会话上下文已到 ${pct}%，这是自动执行的一次 /${config.commandName}，从这里接着做）`
+    : `（自动备好：源会话上下文已到 ${pct}%，新会话已建好，从这里接着做）`;
   const invocation = {
     agent,
-    rawInput: `（自动备好：源会话上下文已到 ${pct}%，新会话已建好，从这里接着做）`,
+    rawInput: head,
     signal: new AbortController().signal,
     commandId: undefined,
   };
@@ -997,7 +1041,7 @@ async function autoReadyOnce(ctx, config, sid, tokens) {
   const result = await runHandoff(ctx, { ...config, compact: false }, invocation);
   const ok = Boolean(result && result.kind === "success");
   console.log(
-    `[xwide-handoff] 自动备好${ok ? "完成" : `未完成（${String((result && result.text) || "").slice(0, 160)}）`}`,
+    `[xwide-handoff] ${tag}${ok ? "完成" : `未完成（${String((result && result.text) || "").slice(0, 160)}）`}`,
   );
 }
 
@@ -1035,6 +1079,8 @@ const CONFIG_DEFAULTS = {
   childMode: "none",
   autoReady: false,
   readyPct: 0.7,
+  autoHandoff: false,
+  autoHandoffPct: 0.9,
   readyCooldownMs: 600000,
   contextWindow: 262144,
 };

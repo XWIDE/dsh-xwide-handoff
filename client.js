@@ -32,6 +32,13 @@ window.__ModuleLoader__.load({
 
     const NS = "settings.xwideHandoff"; // 本分区文案字典命名空间
     const NS_SETTINGS = "dsh-xwide-handoff"; // 宿主设置命名空间 = 装载行 entry id
+    // 设置页脚注（用户点名要「我的开发信息 / 版本号 / 支持的 harness 版本」）：
+    // 版本号与 package.json:3 必须一字不差，发布时两处一起改。
+    const PLUGIN_VERSION = "0.2.5";
+    const PLUGIN_DATE = "2026-11-15";
+    // 支持的宿主：peerDependencies 声明 @deepseek-ai/dsh-app-plugin >= 0.1.7；
+    // 括号里是本机实测读数（F:\deepseekharness\resources\app.asar/package.json: name=@deepseek-ai/dsh-desktop version=0.2.2-rc.3）。
+    const SUPPORTED_DSH = "≥ 0.1.7（本机实测 0.2.2-rc.3）";
 
     const zh = {
       nav: "交接插件",
@@ -42,6 +49,8 @@ window.__ModuleLoader__.load({
       commandName: { label: "命令名", hint: "斜杠命令的名字，默认 handoff（即 /handoff）。" },
       childMode: { label: "新会话模式", hint: "GUI 亲生=浏览器半建新会话（列表可见，推荐）；服务端=直接建会话（可能要刷新才出现）；fork=继承全部历史（上下文不清零）。" },
       autoReady: { label: "到阈值自动备好", hint: "A 半自动：上下文到阈值自动把新会话备好（建好/命名/置顶/填卡），不替你切会话。" },
+      autoHandoff: { label: "自动交接（到点自动执行 /handoff）", hint: "勾上后：上下文到阈值就自动跑一次 /handoff（建新会话+命名+置顶+填卡+驱动首轮），等同你自己手打 /handoff。默认关。" },
+      autoHandoffPct: { label: "自动交接阈值 (%)", hint: "可填 50–95，默认 90；超出范围会自动夹到 50 或 95。" },
       readyPct: { label: "触发阈值 (%)", hint: "inputTokens ÷ 窗口 ≥ 这个百分比就自动备好。填 0–100，如 70。" },
       contextWindow: { label: "上下文窗口 (tokens)", hint: "本地模型窗口，默认 262144。" },
       readyCooldownMs: { label: "全局冷却 (毫秒)", hint: "两次自动备好之间的最小间隔，默认 600000（10 分钟）。" },
@@ -66,6 +75,8 @@ window.__ModuleLoader__.load({
       commandName: { label: "Command name", hint: "Slash-command name, default handoff (i.e. /handoff)." },
       childMode: { label: "New-chat mode", hint: "gui-native = browser half creates a VISIBLE chat (recommended); server = server-side create (list may need refresh); fork = inherit full history (context NOT cleared)." },
       autoReady: { label: "Auto-ready at threshold", hint: "Semi-auto: prepares a new chat when context crosses the threshold (create/name/pin/seed card) without switching sessions." },
+      autoHandoff: { label: "Auto-handoff (runs /handoff at threshold)", hint: "When on, crossing the threshold runs a real /handoff (create + name + pin + seed card + drive first turn) — same as typing /handoff yourself. Off by default." },
+      autoHandoffPct: { label: "Auto-handoff threshold (%)", hint: "Range 50–95, default 90; out-of-range values are clamped to 50 or 95." },
       readyPct: { label: "Trigger threshold (%)", hint: "inputTokens ÷ window ≥ this percent triggers auto-ready. 0–100, e.g. 70." },
       contextWindow: { label: "Context window (tokens)", hint: "Model window, default 262144." },
       readyCooldownMs: { label: "Global cooldown (ms)", hint: "Minimum gap between auto-readies, default 600000 (10 min)." },
@@ -90,6 +101,10 @@ window.__ModuleLoader__.load({
     const labelStyle = { fontSize: 13.5, fontWeight: 550 };
     const hintStyle = { fontSize: 12.5, opacity: 0.62, lineHeight: 1.5 };
     const inputStyle = { width: "100%", boxSizing: "border-box", padding: "5px 8px", fontSize: 13, borderRadius: 6, border: "1px solid rgba(127,127,127,0.35)", background: "transparent", color: "inherit" };
+    // 设置页脚注（开发信息）；样式照 dsh-xwide-annotation 的分区脚注：小字、低对比、上边线
+    const footerStyle = { marginTop: 16, paddingTop: 12, borderTop: "1px solid rgba(127,127,127,0.18)", display: "flex", flexDirection: "column", gap: 3, fontSize: 12.5, opacity: 0.62, lineHeight: 1.7 };
+    // 脚注里的可点链接（用户 2026-11-15 要求：发布页 / B站 / 邮箱都要能点开）
+    const linkStyle = { color: "inherit", textDecoration: "underline", textDecorationThickness: "1px", textUnderlineOffset: "2px", cursor: "pointer" };
 
     function XwideHandoffSection(props) {
       const { useXwideHandoff, update, mutatePath, t } = props;
@@ -121,7 +136,7 @@ window.__ModuleLoader__.load({
       const textRow = (key, raw, commit, placeholder) =>
         h("div", { key, style: rowStyle },
           h("span", { style: labelStyle }, label(key)),
-          h("span", {}, h("DraftInput", { value: raw === undefined ? "" : String(raw), disabled, placeholder: placeholder || "", onCommit: (v) => commit(v) })),
+          h("span", {}, h(DraftInput, { value: raw === undefined ? "" : String(raw), disabled, placeholder: placeholder || "", onCommit: (v) => commit(v) })),
           h("span", { style: hintStyle }, hint(key)));
       const selectRow = (key, current, options, commit) =>
         h("div", { key, style: rowStyle },
@@ -147,6 +162,13 @@ window.__ModuleLoader__.load({
           { value: "fork", label: "fork（带历史）" },
         ], (v) => update("childMode", v)),
         boolRow("autoReady", value.autoReady, (v) => update("autoReady", v)),
+        boolRow("autoHandoff", value.autoHandoff, (v) => update("autoHandoff", v)),
+        textRow("autoHandoffPct", value.autoHandoffPct === undefined ? "" : Math.round(Number(value.autoHandoffPct) * 100), (v) => {
+          const n = Number(v);
+          if (!Number.isFinite(n) || v.trim() === "") return update("autoHandoffPct", null);
+          const p = n > 1.5 ? n / 100 : n; // 接受 90 与 0.9 两种写法
+          return update("autoHandoffPct", Math.min(0.95, Math.max(0.5, p))); // 允许 50–95（用户 2026-11-15 定）
+        }, "90"),
         textRow("readyPct", value.readyPct === undefined ? "" : Math.round(Number(value.readyPct) * 100), (v) => {
           const n = Number(v);
           if (!Number.isFinite(n) || v.trim() === "") return update("readyPct", null);
@@ -183,7 +205,17 @@ window.__ModuleLoader__.load({
         boolRow("cardSectionsGuide", sections.guide !== false, (v) => mutatePath(["cardSections", "guide"], v)),
         boolRow("cardSectionsFiles", sections.files !== false, (v) => mutatePath(["cardSections", "files"], v)),
         boolRow("cardSectionsUsage", sections.usage !== false, (v) => mutatePath(["cardSections", "usage"], v)),
-        textRow("counterFile", value.counterFile, (v) => update("counterFile", v.trim() || null), "~/.dsh/xwide-handoff-counter.json"));
+        textRow("counterFile", value.counterFile, (v) => update("counterFile", v.trim() || null), "~/.dsh/xwide-handoff-counter.json"),
+        h("div", { key: "footer", style: footerStyle },
+          h("div", {}, `dsh-xwide-handoff v${PLUGIN_VERSION} · ${PLUGIN_DATE}`),
+          h("div", {}, `支持的 DeepSeek Harness：${SUPPORTED_DSH}`),
+          h("div", {}, "作者 ",
+            h("a", { href: "https://space.bilibili.com/374064919", target: "_blank", rel: "noreferrer noopener", style: linkStyle }, "X-WIDE"),
+            " · B站 ",
+            h("a", { href: "https://space.bilibili.com/374064919", target: "_blank", rel: "noreferrer noopener", style: linkStyle }, "374064919"),
+            " · xiupk@sina.com.cn"),
+          h("div", {}, "发布页 ",
+            h("a", { href: "https://github.com/XWIDE/dsh-xwide-handoff", target: "_blank", rel: "noreferrer noopener", style: linkStyle }, "github.com/XWIDE/dsh-xwide-handoff"))));
     }
 
     /** 草稿文本框：本地编辑，失焦/回车才写回（避免逐字符打宿主）。 */
