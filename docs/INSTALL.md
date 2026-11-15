@@ -8,7 +8,7 @@
 
 ### 状态 / Status
 
-**v0.2.2 · beta。** 核心流程（`/handoff` → 交接卡 → 新会话 → 自增命名 → 置顶）在作者的机器上长期在用；
+**v0.2.5 · beta。** 核心流程（`/handoff` → 交接卡 → 新会话 → 自增命名 → 置顶）在作者的机器上长期在用；
 跨环境安装路径（尤其是「装成 profile 包 + 浏览器半边」的 `childMode: none`）**尚未在第二台机器上验证**。
 遇到问题请开 issue，带上「启动日志里 `/handoff registered` 打印了几次」这一条。
 
@@ -112,7 +112,7 @@ pnpm add dsh-xwide-handoff
 
 ## English
 
-**v0.2.0 · beta.** The core flow (`/handoff` → card → new session → auto-numbered title → pin) is in daily use
+**v0.2.5 · beta.** The core flow (`/handoff` → card → new session → auto-numbered title → pin) is in daily use
 on the author's machine; cross-machine install paths (especially `childMode: none`, which relies on the
 browser half) are **not yet verified** on a second box.
 
