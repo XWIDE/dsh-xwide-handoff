@@ -1,10 +1,20 @@
 {
   "name": "dsh-xwide-handoff",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "DSH 交接插件 / Handoff plugin：/handoff 生成结构化交接卡（自动序号命名 + 侧栏置顶 + 到阈值自动备好新会话）。Generates structured handoff cards with self-incrementing titles, sidebar pinning and threshold-based auto-prepare, so a near-full chat continues seamlessly in a fresh zero-context session. 双语 README。",
   "type": "module",
   "main": "./index.js",
   "license": "MIT",
+  "author": "XWIDE",
+  "homepage": "https://github.com/XWIDE/dsh-xwide-handoff#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XWIDE/dsh-xwide-handoff.git"
+  },
+  "bugs": {
+    "url": "https://github.com/XWIDE/dsh-xwide-handoff/issues"
+  },
+  "keywords": ["dsh-plugin", "handoff", "context", "session"],
   "exports": {
     ".": "./index.js",
     "./naming": "./naming.js",

@@ -2,6 +2,17 @@
 
 本文件记录 `dsh-xwide-handoff` 的可见变更。日期为本地时间。
 
+## 0.2.6 — 2026-11-15
+
+### 修复
+- **★npm 包发出去没有 `repository`，导致插件市场里本插件「版本号」一栏永远空白。** 现象（用户报障）：插件市场卡片 `XWIDE · · ★ 0`，版本号位置空着，而同作者的 picflow 显示 `v0.3.1`。根因：`package.json` 的 `author / homepage / repository / bugs / keywords` 全写在 `dsh` 块**内部**，npm 只读**顶层** `repository`，所以 registry 文档里该字段为空 —— 而市场正是靠「npm 包的 repository 指回 GitHub 仓库」把两者关联起来（awesome-dsh-plugin `contributing.md` L240：不指回就不关联）。修法：把 `author / homepage / repository / bugs / keywords` 补到 `package.json` 顶层（`dsh` 块内的原名元数据保留不动，宿主读的是那一份）。
+- 版本号 `0.2.5` → `0.2.6`（`package.json` 与 `client.js` 的 `PLUGIN_VERSION` 同步），设置页脚注随之显示 `dsh-xwide-handoff v0.2.6 · 2026-11-15`。
+
+### 判定器
+- 语法：`index.js` / `client.js` `--check` 退出码 0；`package.json` 解析通过且顶层 `repository.url` 指向本仓库。
+- 发布后复核：`registry.npmjs.org/dsh-xwide-handoff/0.2.6` 的 `repository.url` 已非空、`dist-tags.latest=0.2.6`。
+- 未验：市场卡片上的版本号要等 awesome-dsh-plugin 合并 PR #15570 并重建索引后才会出现；设置页 DOM 表现需重启 DSH 装载。
+
 ## 0.2.5 — 2026-11-15
 
 ### 修复
