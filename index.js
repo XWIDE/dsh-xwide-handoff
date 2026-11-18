@@ -11,7 +11,7 @@
 // 用法： /handoff [本次交接重点/未完成事项]   ← 备注会进标题（模板含 {note} 时）与卡片
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -38,7 +38,10 @@ export const inject = ["commands", "sessions"];
 const MAX_CARD_CHARS = 12000;
 const MAX_MESSAGE_CHARS = 800;
 const NAMES_FILE = join(homedir(), ".dsh", "xwide-handoff-names.json");
-const COUNTER_FILE_DEFAULT = join(homedir(), ".dsh", "xwide-handoff-counter.json");
+// [dsh-fix 2026-11-18 用户原话「数据不要强制存在C盘，数据应该存在工作区里面」]
+//   默认挪到工作区 .dsh\（宿主主进程 cwd=工作区，_xwh_debug.log 实测落点）；C 盘旧文件自动读，序号不断档。
+const COUNTER_FILE_DEFAULT = join(process.cwd(), ".dsh", "xwide-handoff-counter.json");
+const COUNTER_FILE_LEGACY = join(homedir(), ".dsh", "xwide-handoff-counter.json");
 // 旧版（dsh-named-handoff 时代）的状态文件：新文件不存在时自动读旧文件（序号不断档），
 // 并且写回时双写旧路径，让旧工具链照常看到最新计数。
 const LEGACY_FILES = {
@@ -80,13 +83,21 @@ function cfg(config) {
     // [dsh-fix 2026-10-12] A 半自动：到阈值自动把新会话**备好**（建好/命名/置顶/卡片注入），
     // 但**不替用户切会话** —— 用户在侧栏看到置顶的新会话，点它继续。
     // 默认**关**（autoReady 必须显式 true 才开）；阈值默认 70%；冷却默认 10 分钟。
-    autoReady: c.autoReady === true,
+    // 用户 2026-11-18：「到阈值自动备好」没搞懂作用、要求去掉——键忽略，yml 写了也不生效。
+  autoReady: false,
     readyPct: Number(c.readyPct) > 0 && Number(c.readyPct) < 1 ? Number(c.readyPct) : 0.7,
     // [dsh-feat 2026-11-15] 全自动交接（用户点名要）：到阈值直接**执行一次 /handoff**
     //   （建新会话 + 命名 + 置顶 + 填卡 + 驱动首轮），不再只是"备好"等用户去点。
     //   与 autoReady 的区别：autoReady 提前备好但不动；autoHandoff 到点就真交接一次。
     //   默认关；阈值默认 90%（用户原话"自动交接90%"）。
-    autoHandoff: c.autoHandoff === true,
+    // 用户 2026-11-18：提醒**默认开**（红箭头「把这个值改成默认开启」）；去掉勾＝不提醒。
+  autoHandoff: c.autoHandoff !== false,
+    // [dsh-feat 2026-11-18] 勾选「自动交接」：到阈值模型说一声之后，插件自己执行一次 /handoff
+    //   （建卡＋建新会话）；不勾＝只提醒，用户手动打 /handoff。（用户原话「如果勾选了就是
+    //   自动交接，没有勾选就是手动打」）
+    autoExecute: c.autoExecute === true,
+    // 用户 2026-11-18 点名要保留：「原地交接」要——勾上后手动 /handoff 只原地压缩＋卡片落盘，不建新对话。
+    inPlace: c.inPlace === true,
     // 阈值允许 50%–95%（用户 2026-11-15 定：可配置输入框，默认 90），越界一律夹回边界。
     autoHandoffPct: (() => {
       const p = Number(c.autoHandoffPct);
@@ -147,11 +158,15 @@ function writeJson(file, obj) {
  * 取本次序号并**立刻占号写回**（按传入的分桶键，组内单调递增）。
  * 关键：序号不来自源会话标题尾号 —— 源会话每次都是新开的，尾号推算会永远算回 01。
  */
-function claimSeq(counterFile, bucketKey) {
-  const store = readJson(counterFile);
+function claimSeq(counterFile, bucketKey, seed = 0) {
+  let store = readJson(counterFile);
+  if (counterFile === COUNTER_FILE_DEFAULT && (!store || !store.buckets)) store = readJson(COUNTER_FILE_LEGACY) || store;
   const buckets = store.buckets && typeof store.buckets === "object" ? store.buckets : {};
   const used = Array.isArray(buckets[bucketKey]) ? buckets[bucketKey] : [];
-  const seq = nextSeqFrom(used, 99);
+  // [dsh-fix 2026-11-17] 问题①：分桶方案迁移（proj→title）后老线落进空桶 → 序号打回 _01。
+  // 种子＝源会话自己标题的数字尾号（"_11" → 下一个至少 _12）。种子只来自本条线，不跨线串号。
+  const top = Math.max(nextSeqFrom(used, 99) - 1, Number.isFinite(seed) ? seed : 0);
+  const seq = Math.min(top + 1, 99);
   buckets[bucketKey] = [...used, seq].slice(-40);
   writeJson(counterFile, { version: 1, updatedAt: new Date().toISOString(), buckets });
   return seq;
@@ -421,11 +436,25 @@ async function runHandoff(ctx, config, invocation) {
   }
   const notes = String((invocation.rawInput || "")).trim();
 
-  // 1) 本地压缩（可关；seam 不可用时跳过并如实写进卡片）
+  // 1) 本地压缩（可关；seam 不可用时跳过并如实写进卡片）。原地交接模式必须压——它就是全部内容。
   let compacted = null;
-  if (config.compact) {
+  if (config.compact || config.inPlace) {
     try {
-      const result = await ctx.compaction.compactNow(agent, invocation.signal, invocation.commandId);
+      // [dsh-fix 2026-11-18] 直取 ctx.compaction 报 cannot get property "compaction" without inject；
+      //   顶层 inject 加 compaction 会让 preset 标 broken（:31 注释是实测教训），改惰性 ctx.inject，
+      //   与本页 systemPrompt/settings 注入同一套路。拿不到照旧走 skipped 如实上报。
+      const result = await new Promise((res, rej) => {
+        let done = false;
+        try {
+          ctx.inject(["compaction"], (scope) => {
+            if (done) return;
+            done = true;
+            scope.compaction.compactNow(agent, invocation.signal, invocation.commandId).then(res, rej);
+          });
+        } catch (e) {
+          if (!done) { done = true; rej(e); }
+        }
+      });
       if (result) compacted = { count: result.shadowedSeqs.length, tokens: result.shadowedTokenCount };
     } catch (error) {
       compacted = { skipped: String((error && error.code) || (error && error.message) || error) };
@@ -438,6 +467,34 @@ async function runHandoff(ctx, config, invocation) {
   const sourceId = session.header ? session.header.id : "(unknown)";
   const cwdKey = String((session.header && session.header.cwd) || process.cwd());
   const messages = recentUserMessages(session, config.recentUserMessages);
+
+  // [dsh-fix 2026-11-18] 原地交接模式（老版做法，用户点名保留）：压缩已完成，卡片落盘即收工，
+  //   不建新会话、不命名、不注入——同一个会话接着干。
+  if (config.inPlace) {
+    const inplaceCard = buildCard({
+      title: "原地交接（不建新会话）",
+      sourceId,
+      childId: "(原地)",
+      notes,
+      messages,
+      compacted,
+      renamedBy: "",
+      seq: 0,
+      files: changedFiles(session),
+      usage: usageOf(session),
+      sections: config.cardSections,
+    });
+    const inplaceFile = join(cardDir(session), `handoff-inplace-${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
+    let inplaceErr = "";
+    try {
+      mkdirSync(dirname(inplaceFile), { recursive: true });
+      writeFileSync(inplaceFile, `${inplaceCard}\n`, "utf8");
+    } catch (error) {
+      inplaceErr = String((error && error.message) || error);
+    }
+    const cNote = compacted === null ? "未压缩" : compacted.skipped ? `压缩跳过（${compacted.skipped}）` : `已压 ${compacted.count} 条（约 ${compacted.tokens} tokens）`;
+    return { kind: "success", text: `dsh-xwide-handoff: 原地交接完成——${cNote}；卡片存档 ${inplaceFile}${inplaceErr ? `（写盘失败：${inplaceErr}）` : ""}。本会话继续，未新建会话。` };
+  }
 
   // 2) 新建新会话。默认 childMode="none"：服务端**不**造会话（造出来的是裸会话，GUI 列表看不见），
   //    改由浏览器半用 GUI「新建对话」同一条 API 建**可见**会话、填卡片、命名。
@@ -553,7 +610,11 @@ async function runHandoff(ctx, config, invocation) {
   const legacyBucketKey = await resolveBucketKey(ctx, sourceId, cwdKey);
   const lineageKey = sanitizeSegment(String(base || ""), 40);
   const bucketKey = lineageKey ? `title:${lineageKey}` : legacyBucketKey;
-  const seq = claimSeq(config.counterFile, bucketKey);
+  // [dsh-fix 2026-11-17] 种子＝源会话最新标题的数字尾号（"…_11" → 11）：
+  // 换桶方案（proj→title）后老线落进空桶时，序号接着源标题往下走（_11 → _12），不打回 _01。
+  const srcTitles = titleHistory(session);
+  const seqTail = /[-_](\d{1,4})\s*$/.exec(String(srcTitles[srcTitles.length - 1] || ""));
+  const seq = claimSeq(config.counterFile, bucketKey, seqTail ? Number(seqTail[1]) : 0);
   const title = renderTitle({
     template: config.template,
     base,
@@ -948,18 +1009,29 @@ function attachSelfHeal(ctx, config) {
 //   保险：按会话只备一次（armed）、全局冷却、总开关 config.autoReady（默认关）。
 
 function attachAutoReady(ctx, config) {
-  if (!config.autoReady && !config.autoHandoff) return;
+  if (!config.autoReady && !config.autoHandoff && !config.autoExecute) return;
   const used = new Map(); // sid -> 最近一次 inputTokens
   const armed = new Set(); // 已备好过的会话
   const handed = new Set(); // 已自动交接过的会话
+  const seenTypes = new Set(); // 事件类型探针：本机真实事件名各记一次
+  const pendingSay = new Map(); // sid -> 上下文百分比字符串（到阈值登记，模型下次请求开口说一声）
+const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，防中途step消耗）
   let lastAt = 0;
+  // 临时诊断通道：桌面宿主 stdout 不落盘，把关键判定点写进工作区文件（定位断点用）
+  const dbgFile = join(homedir(), "Documents", "deepseek-harness", "default-workspace", "_xwh_debug.log");
+  const dbg = (msg) => {
+    try {
+      appendFileSync(dbgFile, new Date().toISOString() + " " + msg + "\n");
+    } catch {}
+  };
+  dbg(`attachAutoReady 装载 autoHandoff=${config.autoHandoff} pct=${config.autoHandoffPct} window=${config.contextWindow}`);
   if (config.autoReady)
     console.log(
       `[xwide-handoff] 自动备好已开：阈值 ${(config.readyPct * 100).toFixed(0)}%／窗口 ${config.contextWindow}／冷却 ${Math.round(config.readyCooldownMs / 60000)} 分钟`,
     );
   if (config.autoHandoff)
     console.log(
-      `[xwide-handoff] 自动交接已开：阈值 ${(config.autoHandoffPct * 100).toFixed(0)}% → 到点直接执行 /${config.commandName}（窗口 ${config.contextWindow}／冷却 ${Math.round(config.readyCooldownMs / 60000)} 分钟）`,
+      `[xwide-handoff] 自动交接已开：阈值 ${(config.autoHandoffPct * 100).toFixed(0)}% → 到点提示用户手动 /${config.commandName}（不自动建新会话；窗口 ${config.contextWindow}／冷却 ${Math.round(config.readyCooldownMs / 60000)} 分钟）`,
     );
 
   ctx.on("session/event", (session, event) => {
@@ -968,28 +1040,67 @@ function attachAutoReady(ctx, config) {
       if (!sid) return;
       if (event.type === "assistant/message") {
         const u = event.data && event.data.usage;
-        if (u && Number.isFinite(u.inputTokens)) used.set(sid, u.inputTokens);
+        if (u && Number.isFinite(u.inputTokens)) {
+          used.set(sid, u.inputTokens);
+          dbg(`usage记录 ${sid} inputTokens=${u.inputTokens}`);
+          uploadGuardOnce(session, config.uploadGuardMaxBytes, dbg);
+          // 用量一到就判阈值：诊断日志证实本机宿主不发 turn/end（2026-11-18），原 turn/end 路径保留兜底
+          const r = u.inputTokens / config.contextWindow;
+          const t = Date.now();
+          if ((config.autoHandoff || config.autoExecute) && !handed.has(sid) && r >= config.autoHandoffPct && t - lastAt >= config.readyCooldownMs) {
+            handed.add(sid);
+            lastAt = t;
+            // 提醒勾管开口，自动勾管干活——只勾自动不勾提醒＝悄悄交接不说话
+            if (config.autoHandoff) pendingSay.set(sid, (r * 100).toFixed(0));
+            dbg(`到阈值登记开口(usage路径) ${sid} pct=${(r * 100).toFixed(0)}`);
+            // 勾了「自动交接」：先让模型说一声，20 秒后插件自己执行一次 /handoff（建新会话＋填卡）
+            if (config.autoExecute) {
+              setTimeout(() => {
+                autoReadyOnce(ctx, config, sid, u.inputTokens, "handoff").catch((error) => {
+                  console.log(`[xwide-handoff] 自动交接失败(usage路径)：${String((error && error.message) || error)}`);
+                });
+              }, 20000);
+              console.log(`[xwide-handoff] 已排定自动交接(usage路径，20 秒后执行)：${sid} ${(r * 100).toFixed(0)}%`);
+            }
+          }
+        }
         return;
+      }
+      if (!seenTypes.has(event.type)) {
+        seenTypes.add(event.type);
+        dbg(`事件类型探针: ${event.type}`);
       }
       if (event.type !== "turn/end") return;
       const n = used.get(sid);
       if (!Number.isFinite(n)) return;
       const ratio = n / config.contextWindow;
       const now = Date.now();
-      // ① 全自动交接（勾了「自动交接」）：到阈值直接跑一次 handoff，等同用户手打 /handoff
-      if (config.autoHandoff && !handed.has(sid) && ratio >= config.autoHandoffPct) {
+      dbg(`turn/end判定 ${sid} tokens=${n} ratio=${(ratio * 100).toFixed(1)}% 阈值=${(config.autoHandoffPct * 100).toFixed(0)}% handed=${handed.has(sid)}`);
+      // ① 自动交接（勾了「自动交接」）：到阈值**只告知用户**，不再静默建新会话
+      //   （2026-11-17 用户点名：「自动交接是没有告知用户…不新建对话是可以的」→ 改为纯提示模式，
+      //    提示横幅由浏览器半弹；插件历史上合成写会话事件会撞回放号 → corrupt，见 :660-680 注释，
+      //    所以提示绝不走 session.append，只走浏览器 DOM。）
+      if ((config.autoHandoff || config.autoExecute) && !handed.has(sid) && ratio >= config.autoHandoffPct) {
         if (now - lastAt < config.readyCooldownMs) {
-          console.log(`[xwide-handoff] 自动交接：${sid} 已达 ${(ratio * 100).toFixed(1)}%，但冷却中，跳过`);
+          console.log(`[xwide-handoff] 自动提示：${sid} 已达 ${(ratio * 100).toFixed(1)}%，但冷却中，跳过`);
           return;
         }
         handed.add(sid);
         lastAt = now;
+        if (config.autoHandoff) pendingSay.set(sid, (ratio * 100).toFixed(0));
+        dbg(`到阈值登记开口 ${sid} pct=${(ratio * 100).toFixed(0)}`);
+        // 勾了「自动交接」：先让模型说一声，20 秒后插件自己执行一次 /handoff（建卡＋建新会话）
+        if (config.autoExecute) {
+          setTimeout(() => {
+            autoReadyOnce(ctx, config, sid, n, "handoff").catch((error) => {
+              console.log(`[xwide-handoff] 自动交接失败：${String((error && error.message) || error)}`);
+            });
+          }, 20000);
+          console.log(`[xwide-handoff] 已排定自动交接（20 秒后执行）：${sid} ${(ratio * 100).toFixed(0)}%`);
+        }
         console.log(
-          `[xwide-handoff] 自动交接触发：上下文 ${(ratio * 100).toFixed(1)}%（${n}/${config.contextWindow}）→ 执行 /${config.commandName}：${sid}`,
+          `[xwide-handoff] 自动提示：上下文 ${(ratio * 100).toFixed(1)}%（${n}/${config.contextWindow}）→ 让模型开口 + 提示用户手动 /${config.commandName}（不再自动建新会话）：${sid}`,
         );
-        autoReadyOnce(ctx, config, sid, n, "handoff").catch((error) => {
-          console.log(`[xwide-handoff] 自动交接失败：${String((error && error.message) || error)}`);
-        });
         return;
       }
       // ② 半自动备好（autoReady）：提前把新会话建好，但不替用户切
@@ -1012,6 +1123,45 @@ function attachAutoReady(ctx, config) {
       console.log(`[xwide-handoff] 自动备好watcher异常：${String((error && error.message) || error)}`);
     }
   });
+
+  // 「模型开口」官方注入通道（照 dsh-project-groups 的 systemPrompt.context() 模式）：
+  // 到阈值登记 pendingSay，下一次模型请求注入一句指令，让模型在回复开头告诉用户
+  // 「上下文已到 X%，建议打 /handoff 记录交接」。只改发给模型的请求、不写会话日志
+  // （= 不撞回放号 → 无 corrupt 地雷）；读取即消费＝说一次，文本不变时零贡献。
+  try {
+    ctx.inject(["systemPrompt"], (scope) => {
+      dbg("inject监听被调用");
+      const prompt = scope.get("systemPrompt");
+      if (!prompt || typeof prompt.context !== "function") {
+        dbg(`systemPrompt不可用 prompt=${!!prompt} hasContext=${typeof (prompt && prompt.context)}`);
+        return;
+      }
+      prompt.context({
+        name: "xwide-handoff-say",
+        order: 100,
+        text: (context) => {
+          const sid = context && context.agent && context.agent.session && context.agent.session.id;
+          dbg(`text()调用 sid=${sid} 命中=${pendingSay.has(sid)}`);
+          if (!sid) return "";
+          const pct = pendingSay.get(sid);
+          if (pct === undefined) return "";
+          // 命中后不清零：宿主可能在中途 step 请求取走而错过最终生成那次；保留到第 2 次命中再清
+          sayArmed.set(sid, (sayArmed.get(sid) || 0) + 1);
+          if (sayArmed.get(sid) >= 2) {
+            pendingSay.delete(sid);
+            sayArmed.delete(sid);
+          }
+          console.log(`[xwide-handoff] 已注入开口指令：${sid} ${pct}%`);
+          return `<xwide-handoff>系统指令：本会话上下文已到 ${pct}%。请在本次回复的最开头用一行白话告诉用户「上下文已到 ${pct}%，建议打 /${config.commandName} 记录交接」，然后照常继续干活。</xwide-handoff>`;
+        },
+      });
+    });
+    console.log("[xwide-handoff] 模型开口注入已注册（官方 systemPrompt.context 通道）");
+    dbg("inject(systemPrompt) 注册成功");
+  } catch (error) {
+    dbg(`inject注册失败: ${String((error && error.message) || error)}`);
+    console.log(`[xwide-handoff] 开口注入注册失败（退化为仅日志提示）：${String((error && error.message) || error)}`);
+  }
 }
 
 async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
@@ -1038,7 +1188,8 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
     commandId: undefined,
   };
   // compact:false —— 源会话已到阈值，再压一次只会多花时间；卡片本身就是摘要式的。
-  const result = await runHandoff(ctx, { ...config, compact: false }, invocation);
+  // inPlace:false —— 「勾了自动交接＝出去到新对话」（用户 2026-11-18 原话），原地模式只管手动 /handoff。
+  const result = await runHandoff(ctx, { ...config, compact: false, inPlace: false }, invocation);
   const ok = Boolean(result && result.kind === "success");
   console.log(
     `[xwide-handoff] ${tag}${ok ? "完成" : `未完成（${String((result && result.text) || "").slice(0, 160)}）`}`,
@@ -1079,11 +1230,55 @@ const CONFIG_DEFAULTS = {
   childMode: "none",
   autoReady: false,
   readyPct: 0.7,
-  autoHandoff: false,
+  autoHandoff: true,
+  autoExecute: false,
+  inPlace: false,
   autoHandoffPct: 0.9,
   readyCooldownMs: 600000,
   contextWindow: 262144,
+  uploadGuardMaxBytes: 6291456,
 };
+
+// [2026-11-18 用户「加一个插件的功能，让它不要发生这个问题」] 会话日志上传积压防呆守卫。
+// 根因：session-log-deepseek 把水印(delivery-accepted)之后的全部事件序列化进 dsh_session_log 字段；
+// 单事件超过 maxBytes 时偏移卡在该事件 → 积压每轮随请求重放 → 请求体 >8MiB → 网关 413，会话堵死。
+// 守卫：统计水印之后 pending 事件的序列化字节数，超过 uploadGuardMaxBytes（默认 6 MiB < 网关 8 MiB）
+// 就追加一条 delivery-accepted 水印把偏移推到末尾（官方 fold 规则：throughSeq 必须 < 事件自身 seq）。
+const uploadGuardAt = new Map();
+function uploadGuardOnce(session, maxBytes, dbg) {
+  try {
+    if (!session || typeof session.snapshotEvents !== "function" || typeof session.append !== "function") return;
+    const sid = session.header && session.header.id;
+    const ver = session.header && session.header.version;
+    if (!sid) return;
+    const now = Date.now();
+    if (now - (uploadGuardAt.get(sid) || 0) < 600000) return;
+    uploadGuardAt.set(sid, now);
+    const events = session.snapshotEvents();
+    let through = -1;
+    for (const ev of events) {
+      if (ev.type !== "session-log-deepseek/delivery-accepted") continue;
+      if (ev.data && ev.data.sessionId === sid && (ev.data.sessionFormatVersion ?? 0) === ver && Number.isFinite(ev.data.throughSeq) && ev.data.throughSeq > through) through = ev.data.throughSeq;
+    }
+    let bytes = 0;
+    let last = -1;
+    for (const ev of events) {
+      if (!(ev.seq > through)) continue;
+      last = ev.seq;
+      try { bytes += JSON.stringify(ev).length + 2; } catch { bytes += 4096; }
+      if (bytes > maxBytes) break;
+    }
+    if (bytes <= maxBytes) return;
+    session.append("session-log-deepseek/delivery-accepted", {
+      throughSeq: last,
+      sessionId: sid,
+      sessionFormatVersion: ver,
+    });
+    dbg(`上传积压守卫 ${sid} pending>=${(bytes / 1048576).toFixed(1)}MB 水印已推到 seq=${last}`);
+  } catch (error) {
+    console.log(`[xwide-handoff] 上传积压守卫失败：${String((error && error.message) || error)}`);
+  }
+}
 
 export const Config = await (async () => {
   const z = await resolveZ();
