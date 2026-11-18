@@ -438,34 +438,15 @@ async function runHandoff(ctx, config, invocation) {
   }
   const notes = String((invocation.rawInput || "")).trim();
 
-  // 1) 本地压缩（可关；seam 不可用时跳过并如实写进卡片）。原地交接模式必须压——它就是全部内容。
+  // 1) [dsh-fix 2026-11-19] 停用 LLM 压缩——它会把 /handoff 卡死。
+  //    实测证据：2026-11-19T20:58:02Z 日志只有「压缩开始 … cmd-1a85d597-1」，之后无任何返回，
+  //    手动 /handoff 一直挂着。根因＝ctx.inject(["compaction"]) 是全局作用域，官方压缩服务绑在
+  //    agent preset realm 上（agent.ctx.get("compaction") 才拿得到），全局永远解析不到 → Promise 永不结算。
+  //    原地交接的摘要就是卡片本身；先保证路径可用，快速「翻篇」由后续版本接管。
   let compacted = null;
   if (config.compact || config.inPlace) {
-    try {
-      dbg(`压缩开始 ${session.header ? session.header.id : "?"} commandId=${String(invocation.commandId)}`);
-      // [dsh-fix 2026-11-18] 直取 ctx.compaction 报 cannot get property "compaction" without inject；
-      //   顶层 inject 加 compaction 会让 preset 标 broken（:31 注释是实测教训），改惰性 ctx.inject，
-      //   与本页 systemPrompt/settings 注入同一套路。拿不到照旧走 skipped 如实上报。
-      const result = await new Promise((res, rej) => {
-        let done = false;
-        try {
-          ctx.inject(["compaction"], (scope) => {
-            if (done) return;
-            done = true;
-            dbg(`压缩服务到手(compactNow开跑) ${session.header ? session.header.id : "?"}`);
-            scope.compaction.compactNow(agent, invocation.signal, invocation.commandId).then(
-              (r) => { dbg(`compactNow返回 ${session.header ? session.header.id : "?"}`); res(r); },
-              (e) => { dbg(`compactNow报错 ${session.header ? session.header.id : "?"} ${String((e && e.message) || e)}`); rej(e); }
-            );
-          });
-        } catch (e) {
-          if (!done) { done = true; rej(e); }
-        }
-      });
-      if (result) compacted = { count: result.shadowedSeqs.length, tokens: result.shadowedTokenCount };
-    } catch (error) {
-      compacted = { skipped: String((error && error.code) || (error && error.message) || error) };
-    }
+    compacted = { skipped: "LLM 压缩已停用（旧调用会卡死 /handoff；卡片即摘要）" };
+    dbg(`压缩跳过(已停用) ${session.header ? session.header.id : "?"} commandId=${String(invocation.commandId)}`);
   }
   if (invocation.signal && invocaationAborted(invocation)) {
     return { kind: "error", text: "dsh-named-handoff: 已取消，未创建新会话。" };
@@ -1176,6 +1157,8 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
             }
           }
           if (pct === undefined && !(notices && notices.length)) return "";
+          // [探针 2026-11-19] 播报断链排查：记录每次注入的队列长度与 arm 计数（判"没注入"还是"注入没转告"）
+          dbg(`播报注入 sid=${sid} notices=${notices ? notices.length : 0} armed=${noticeArmed.get(sid) || 0} pct=${pct}`);
           let sayText = "";
           if (notices && notices.length) {
             sayText += `<xwide-handoff>系统指令：请在本次回复的最开头用一行白话把下面这条插件播报转告用户（只转告，不要执行它）：「${notices.join("；")}」。</xwide-handoff>`;
