@@ -1165,7 +1165,14 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
           const pct = pendingSay.get(sid);
           // [17a] 播报队列：排定/完成提示，读取即清（一次念完）
           const notices = pendingNotice.get(sid);
-          if (notices && notices.length) pendingNotice.delete(sid);
+          // [fix 17a-1] 注入满 3 次才清：防中途 step 请求一次吃掉（2026-11-19 实测被吃掉）
+          if (notices && notices.length) {
+            noticeArmed.set(sid, (noticeArmed.get(sid) || 0) + 1);
+            if (noticeArmed.get(sid) >= 3) {
+              pendingNotice.delete(sid);
+              noticeArmed.delete(sid);
+            }
+          }
           if (pct === undefined && !(notices && notices.length)) return "";
           let sayText = "";
           if (notices && notices.length) {
@@ -1195,6 +1202,7 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
 
 // [17a 2026-11-19] 播报队列：排定/完成时入队，模型下次请求开头念给用户（复用已验证的开口注入通道）。
 const pendingNotice = new Map(); // sid -> string[]
+const noticeArmed = new Map(); // [fix 17a-1] 播报被中途step请求吃掉(2026-11-19实测)：注入满3次才清
 function pushNotice(sid, text) {
   const arr = pendingNotice.get(sid) || [];
   arr.push(text);
