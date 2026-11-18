@@ -1160,6 +1160,7 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
         order: 100,
         text: (context) => {
           const sid = context && context.agent && context.agent.session && context.agent.session.id;
+          if (sid) agentRef.set(sid, context.agent); // [18] 每次请求刷新 agent 引用，供自动交接调 compactNow
           dbg(`text()调用 sid=${sid} 命中=${pendingSay.has(sid)}`);
           if (!sid) return "";
           const pct = pendingSay.get(sid);
@@ -1203,6 +1204,8 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
 // [17a 2026-11-19] 播报队列：排定/完成时入队，模型下次请求开头念给用户（复用已验证的开口注入通道）。
 const pendingNotice = new Map(); // sid -> string[]
 const noticeArmed = new Map(); // [fix 17a-1] 播报被中途step请求吃掉(2026-11-19实测)：注入满3次才清
+// [18 2026-11-19] 从开口注入回调顺手捕获会话 agent 引用，供自动交接直调宿主 compactNow（同宿主自动压缩的轮中发起机制）
+const agentRef = new Map(); // sid -> agent
 function pushNotice(sid, text) {
   const arr = pendingNotice.get(sid) || [];
   arr.push(text);
@@ -1223,13 +1226,42 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
     return;
   }
   try {
+    // [18 2026-11-19] 用户点名「交接后百分比要掉下来」：自动路径补真压缩——用注入通道捕获的 agent
+    //   直调宿主 scope.compaction.compactNow（宿主自动压缩本身就在轮中发起，同机制；不等待空闲）。
+    let compacted = { count: 0, tokens: 0, skipped: "无agent引用，未压缩" };
+    const agent = agentRef.get(sid);
+    if (config.inPlace && agent) {
+      try {
+        dbg(`${tag}压缩开始 ${sid}`);
+        const result = await new Promise((res, rej) => {
+          let done = false;
+          try {
+            ctx.inject(["compaction"], (scope) => {
+              if (done) return;
+              done = true;
+              scope.compaction.compactNow(agent, new AbortController().signal, `auto-handoff-${Date.now()}`).then(
+                (r) => res(r),
+                (e) => rej(e)
+              );
+            });
+          } catch (e) {
+            if (!done) { done = true; rej(e); }
+          }
+        });
+        if (result) compacted = { count: (result.shadowedSeqs || []).length, tokens: result.shadowedTokenCount };
+        dbg(`${tag}压缩返回 ${sid} count=${compacted.count} tokens=${compacted.tokens}`);
+      } catch (error) {
+        compacted = { skipped: String((error && error.code) || (error && error.message) || error) };
+        dbg(`${tag}压缩失败 ${sid} ${String((error && error.message) || error)}`);
+      }
+    }
     const card = buildCard({
       title: "自动交接（原地，插件自动发起）",
       sourceId: sid,
       childId: "(原地)",
-      notes: `自动交接：上下文已到 ${pct}%（阈值 ${((config.autoHandoffPct ?? 0.7) * 100).toFixed(0)}% 触发），插件就地落卡；压缩由宿主自动压缩接管。`,
+      notes: `自动交接：上下文已到 ${pct}%（阈值 ${((config.autoHandoffPct ?? 0.7) * 100).toFixed(0)}% 触发），插件就地落卡＋压缩。`,
       messages: recentUserMessages(session, config.recentUserMessages),
-      compacted: { count: 0, tokens: 0, skipped: "自动路径不额外压缩，宿主自动压缩接管" },
+      compacted,
       renamedBy: "",
       seq: 0,
       files: changedFiles(session),
@@ -1241,8 +1273,8 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
     writeFileSync(cardFile, `${card}\n`, "utf8");
     dbg(`${tag}完成(卡片落盘) ${sid} -> ${cardFile}`);
     pushNotice(sid, config.showCard === false
-      ? "自动交接完成：上下文已压缩，本会话继续，不用你手打 /handoff。"
-      : `自动交接完成：交接卡已存档 ${cardFile}；上下文压缩由宿主自动压缩接管，本会话继续。`);
+      ? `自动交接完成：已压 ${compacted.count || 0} 条，上下文已瘦身，本会话继续。`
+      : `自动交接完成：已压 ${compacted.count || 0} 条，交接卡已存档 ${cardFile}，本会话继续。`);
   } catch (error) {
     dbg(`${tag}失败(写卡) ${sid}：${String((error && error.message) || error)}`);
   }
