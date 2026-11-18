@@ -1024,7 +1024,7 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
       appendFileSync(dbgFile, new Date().toISOString() + " " + msg + "\n");
     } catch {}
   };
-  dbg(`attachAutoReady 装载 autoHandoff=${config.autoHandoff} pct=${config.autoHandoffPct} window=${config.contextWindow}`);
+  dbg(`attachAutoReady 装载 autoHandoff=${config.autoHandoff} autoExecute=${config.autoExecute} inPlace=${config.inPlace} pct=${config.autoHandoffPct} window=${config.contextWindow}`);
   if (config.autoReady)
     console.log(
       `[xwide-handoff] 自动备好已开：阈值 ${(config.readyPct * 100).toFixed(0)}%／窗口 ${config.contextWindow}／冷却 ${Math.round(config.readyCooldownMs / 60000)} 分钟`,
@@ -1059,15 +1059,16 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
             lastAt = t;
             // 提醒勾管开口，自动勾管干活——只勾自动不勾提醒＝悄悄交接不说话
             if (config.autoHandoff) pendingSay.set(sid, (r * 100).toFixed(0));
-            dbg(`到阈值登记开口(usage路径) ${sid} pct=${(r * 100).toFixed(0)}`);
+          dbg(`到阈值登记开口(usage路径) ${sid} pct=${(r * 100).toFixed(0)} autoExecute=${config.autoExecute}`);
             // 勾了「自动交接」：先让模型说一声，20 秒后插件自己执行一次 /handoff（建新会话＋填卡）
             if (config.autoExecute) {
+              dbg(`已排定自动交接(usage路径，20 秒后执行) ${sid} ${(r * 100).toFixed(0)}%`);
               setTimeout(() => {
+                dbg(`定时器开火(usage路径) ${sid}`);
                 autoReadyOnce(ctx, config, sid, promptTotal, "handoff").catch((error) => {
-                  console.log(`[xwide-handoff] 自动交接失败(usage路径)：${String((error && error.message) || error)}`);
+                  dbg(`自动交接失败(usage路径)：${String((error && error.message) || error)}`);
                 });
               }, 20000);
-              console.log(`[xwide-handoff] 已排定自动交接(usage路径，20 秒后执行)：${sid} ${(r * 100).toFixed(0)}%`);
             }
           }
         }
@@ -1173,15 +1174,16 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
 
 async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
   const tag = mode === "handoff" ? "自动交接" : "自动备好";
+  dbg(`${tag}进入 ${sid} tokens=${tokens} inPlace=${config.inPlace}`);
   const ctl = typeof ctx.get === "function" ? ctx.get("sessionController") : void 0;
   if (!ctl || typeof ctl.resolveAgent !== "function") {
-    console.log(`[xwide-handoff] ${tag}跳过：sessionController 服务不可用`);
+    dbg(`${tag}跳过：sessionController 服务不可用`);
     return;
   }
   const agent = await ctl.resolveAgent(sid);
   const session = agent && agent.session;
   if (!session) {
-    console.log(`[xwide-handoff] ${tag}跳过：拿不到会话对象`);
+    dbg(`${tag}跳过：拿不到会话对象`);
     return;
   }
   const pct = ((tokens / config.contextWindow) * 100).toFixed(0);
@@ -1198,9 +1200,7 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
   // inPlace 跟随勾选 —— 「自己就在当前对话交接，不新建对话，不用你手打 /handoff」（用户 2026-11-19 拍板，推翻 11-18 的「自动交接始终去新对话」）。
   const result = await runHandoff(ctx, { ...config, compact: false }, invocation);
   const ok = Boolean(result && result.kind === "success");
-  console.log(
-    `[xwide-handoff] ${tag}${ok ? "完成" : `未完成（${String((result && result.text) || "").slice(0, 160)}）`}`,
-  );
+  dbg(`${tag}${ok ? "完成" : `未完成（${String((result && result.text) || "").slice(0, 160)}）`} ${sid}`);
 }
 
 // ---------- 设置表单（harness 0.1.7 Config 驱动模型，照 @falling-ts/dsh-force-compact）----------
