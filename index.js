@@ -1249,9 +1249,29 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
     pushNotice(sid, config.showCard === false
       ? "自动交接完成：本会话继续；旧对话由宿主自动压缩在接近满时接管。"
       : `自动交接完成：交接卡已存档 ${cardFile}，全程零压缩请求（秒级）；旧对话瘦身由宿主自动压缩在接近满时接管。`);
-    // [18c 2026-11-19] 用户原话「并不希望是用什么压缩的方式」「跟手动交接一样速度」。实测读数：
-    //   手动(18:53)与自动(19:11)发出的 compactNow 均无返回行＝宿主压缩在本机从未成功；
-    //   用户记忆的"手动快"＝旧版纯落卡（秒级，不碰压缩）。故删除后台压缩调用，交接＝落卡+播报。
+    // [18d 2026-11-19] 用户原话「交接完成后永远维持50%？这感觉不对」→ 要真掉百分比。根因读数
+    //   （@falling-ts/dsh-force-compact/src/engine/backend.js:4-12 本机实测注释）：官方 compaction
+    //   服务挂在 agent 的 realm（agent.ctx.get('compaction')），宿主全局 ctx.get('compaction')=undefined。
+    //   此前 ctx.inject(["compaction"]) 摸不到服务 → 回调永不触发 → Promise 永挂（18:53/19:11 两次无返回实证）。
+    //   修：从 agent.ctx 直取服务；卡片+播报已秒级完成，压缩在后台跑，压完百分比下降并再播报。
+    const agent = agentRef.get(sid);
+    const svc = config.inPlace && agent && agent.ctx && typeof agent.ctx.get === "function"
+      ? agent.ctx.get("compaction")
+      : undefined;
+    if (svc && typeof svc.compactNow === "function") {
+      const t0 = Date.now();
+      dbg(`${tag}压缩开始(后台,realm) ${sid}`);
+      Promise.resolve()
+        .then(() => svc.compactNow(agent, new AbortController().signal, `auto-handoff-${Date.now()}`))
+        .then((r) => {
+          const n = r ? (r.shadowedSeqs || []).length : 0;
+          dbg(`${tag}压缩返回(后台) ${sid} count=${n} 用时ms=${Date.now() - t0}`);
+          pushNotice(sid, `后台压缩完成：已压 ${n} 条，上下文百分比会下降。`);
+        })
+        .catch((e) => dbg(`${tag}压缩失败(后台) ${sid} ${String((e && e.code) || (e && e.message) || e)} 用时ms=${Date.now() - t0}`));
+    } else {
+      dbg(`${tag}压缩跳过(realm无服务) ${sid}`);
+    }
   } catch (error) {
     dbg(`${tag}失败(写卡) ${sid}：${String((error && error.message) || error)}`);
   }
