@@ -1183,31 +1183,36 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
 async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
   const tag = mode === "handoff" ? "自动交接" : "自动备好";
   dbg(`${tag}进入 ${sid} tokens=${tokens} inPlace=${config.inPlace}`);
-  const ctl = typeof ctx.get === "function" ? ctx.get("sessionController") : void 0;
-  if (!ctl || typeof ctl.prompt !== "function") {
-    dbg(`${tag}跳过：sessionController.prompt 服务不可用`);
+  // [dsh-fix 2026-11-19 第二刀] 两条老路都被实测否掉：
+  //   ① resolveAgent(sid) 要等会话 agent 空闲，自动触发恰在模型活跃轮中间 → promise 永挂（18:06/18:24 两次）。
+  //   ② sessionController.prompt 注入 "/handoff" 文本＝普通消息，不走命令解析，不派发（18:30 注入落会话 JSON，无卡片无压缩）。
+  //   本刀零宿主依赖：卡片直接落盘（session 对象插件早有，无 agent、无空闲等待）；压缩交给宿主自动压缩。
+  const pct = ((tokens / config.contextWindow) * 100).toFixed(0);
+  const session = ctx.sessions && typeof ctx.sessions.get === "function" ? ctx.sessions.get(sid) : void 0;
+  if (!session || typeof session.snapshotEvents !== "function") {
+    dbg(`${tag}跳过：拿不到会话对象(sessions.get)`);
     return;
   }
-  const pct = ((tokens / config.contextWindow) * 100).toFixed(0);
-  // [dsh-fix 2026-11-19] 不再自拼 invocation 直接调 runHandoff：resolveAgent(sid) 要等会话 agent
-  //   空闲，而自动触发恰恰发生在模型活跃轮中间 → promise 永挂（实测 18:06/18:24 两次「进入」后无下文）。
-  //   改走官方 prompt 通道（= GUI 发一条消息同一路，手动卡片投递验证过的通道②）：宿主排队到空闲、
-  //   派发完整 invocation（带 commandId），速度/行为与手动打 /handoff 完全一致。
-  const head = mode === "handoff"
-    ? `/${config.commandName}（自动交接：源会话上下文已到 ${pct}%，插件自动发起，就地执行不用新建对话）`
-    : `（自动备好：源会话上下文已到 ${pct}%，新会话已建好，从这里接着做）`;
   try {
-    await ctl.prompt(
-      {
-        sessionId: sid,
-        requestId: `xwide-auto-${mode}-${randomUUID()}`,
-        content: [{ type: "text", text: head }],
-      },
-      new AbortController().signal,
-    );
-    dbg(`${tag}已注入指令(prompt通道) ${sid} ${head.slice(0, 40)}`);
+    const card = buildCard({
+      title: "自动交接（原地，插件自动发起）",
+      sourceId: sid,
+      childId: "(原地)",
+      notes: `自动交接：上下文已到 ${pct}%（阈值 ${((config.autoHandoffPct ?? 0.7) * 100).toFixed(0)}% 触发），插件就地落卡；压缩由宿主自动压缩接管。`,
+      messages: recentUserMessages(session, config.recentUserMessages),
+      compacted: { count: 0, tokens: 0, skipped: "自动路径不额外压缩，宿主自动压缩接管" },
+      renamedBy: "",
+      seq: 0,
+      files: changedFiles(session),
+      usage: usageOf(session),
+      sections: config.cardSections,
+    });
+    const cardFile = join(cardDir(session), `handoff-inplace-auto-${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
+    mkdirSync(dirname(cardFile), { recursive: true });
+    writeFileSync(cardFile, `${card}\n`, "utf8");
+    dbg(`${tag}完成(卡片落盘) ${sid} -> ${cardFile}`);
   } catch (error) {
-    dbg(`${tag}失败(prompt通道) ${sid}：${String((error && error.message) || error)}`);
+    dbg(`${tag}失败(写卡) ${sid}：${String((error && error.message) || error)}`);
   }
 }
 
