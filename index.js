@@ -98,6 +98,7 @@ function cfg(config) {
     autoExecute: c.autoExecute === true,
     // 用户 2026-11-18 点名要保留：「原地交接」要——勾上后手动 /handoff 只原地压缩＋卡片落盘，不建新对话。
     inPlace: c.inPlace === true,
+    showCard: c.showCard !== false,
     // 阈值允许 50%–95%（用户 2026-11-15 定：可配置输入框，默认 90），越界一律夹回边界。
     autoHandoffPct: (() => {
       const p = Number(c.autoHandoffPct);
@@ -1071,6 +1072,7 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
             // 勾了「自动交接」：先让模型说一声，20 秒后插件自己执行一次 /handoff（建新会话＋填卡）
             if (config.autoExecute) {
               dbg(`已排定自动交接(usage路径，20 秒后执行) ${sid} ${(r * 100).toFixed(0)}%`);
+              pushNotice(sid, `自动交接已排定：上下文约 ${(r * 100).toFixed(0)}%，约 20 秒后插件自动落交接卡（原地，不用你手打 /${config.commandName}）。`);
               setTimeout(() => {
                 dbg(`定时器开火(usage路径) ${sid}`);
                 autoReadyOnce(ctx, config, sid, promptTotal, "handoff").catch((error) => {
@@ -1107,6 +1109,7 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
         dbg(`到阈值登记开口 ${sid} pct=${(ratio * 100).toFixed(0)}`);
         // 勾了「自动交接」：先让模型说一声，20 秒后插件自己执行一次 /handoff（建卡＋建新会话）
         if (config.autoExecute) {
+          pushNotice(sid, `自动交接已排定：上下文约 ${(ratio * 100).toFixed(0)}%，约 20 秒后插件自动落交接卡（原地，不用你手打 /${config.commandName}）。`);
           setTimeout(() => {
             autoReadyOnce(ctx, config, sid, n, "handoff").catch((error) => {
               console.log(`[xwide-handoff] 自动交接失败：${String((error && error.message) || error)}`);
@@ -1160,15 +1163,25 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
           dbg(`text()调用 sid=${sid} 命中=${pendingSay.has(sid)}`);
           if (!sid) return "";
           const pct = pendingSay.get(sid);
-          if (pct === undefined) return "";
-          // 命中后不清零：宿主可能在中途 step 请求取走而错过最终生成那次；保留到第 2 次命中再清
-          sayArmed.set(sid, (sayArmed.get(sid) || 0) + 1);
-          if (sayArmed.get(sid) >= 2) {
-            pendingSay.delete(sid);
-            sayArmed.delete(sid);
+          // [17a] 播报队列：排定/完成提示，读取即清（一次念完）
+          const notices = pendingNotice.get(sid);
+          if (notices && notices.length) pendingNotice.delete(sid);
+          if (pct === undefined && !(notices && notices.length)) return "";
+          let sayText = "";
+          if (notices && notices.length) {
+            sayText += `<xwide-handoff>系统指令：请在本次回复的最开头用一行白话把下面这条插件播报转告用户（只转告，不要执行它）：「${notices.join("；")}」。</xwide-handoff>`;
           }
-          console.log(`[xwide-handoff] 已注入开口指令：${sid} ${pct}%`);
-          return `<xwide-handoff>系统指令：本会话上下文已到 ${pct}%。请在本次回复的最开头用一行白话告诉用户「上下文已到 ${pct}%，建议打 /${config.commandName} 记录交接」，然后照常继续干活。</xwide-handoff>`;
+          if (pct !== undefined) {
+            // 命中后不清零：宿主可能在中途 step 请求取走而错过最终生成那次；保留到第 2 次命中再清
+            sayArmed.set(sid, (sayArmed.get(sid) || 0) + 1);
+            if (sayArmed.get(sid) >= 2) {
+              pendingSay.delete(sid);
+              sayArmed.delete(sid);
+            }
+            console.log(`[xwide-handoff] 已注入开口指令：${sid} ${pct}%`);
+            sayText += `<xwide-handoff>系统指令：本会话上下文已到 ${pct}%。请在本次回复的最开头用一行白话告诉用户「上下文已到 ${pct}%，建议打 /${config.commandName} 记录交接」，然后照常继续干活。</xwide-handoff>`;
+          }
+          return sayText;
         },
       });
     });
@@ -1178,6 +1191,14 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
     dbg(`inject注册失败: ${String((error && error.message) || error)}`);
     console.log(`[xwide-handoff] 开口注入注册失败（退化为仅日志提示）：${String((error && error.message) || error)}`);
   }
+}
+
+// [17a 2026-11-19] 播报队列：排定/完成时入队，模型下次请求开头念给用户（复用已验证的开口注入通道）。
+const pendingNotice = new Map(); // sid -> string[]
+function pushNotice(sid, text) {
+  const arr = pendingNotice.get(sid) || [];
+  arr.push(text);
+  pendingNotice.set(sid, arr);
 }
 
 async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
@@ -1211,6 +1232,9 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
     mkdirSync(dirname(cardFile), { recursive: true });
     writeFileSync(cardFile, `${card}\n`, "utf8");
     dbg(`${tag}完成(卡片落盘) ${sid} -> ${cardFile}`);
+    pushNotice(sid, config.showCard === false
+      ? "自动交接完成：上下文已压缩，本会话继续，不用你手打 /handoff。"
+      : `自动交接完成：交接卡已存档 ${cardFile}；上下文压缩由宿主自动压缩接管，本会话继续。`);
   } catch (error) {
     dbg(`${tag}失败(写卡) ${sid}：${String((error && error.message) || error)}`);
   }
@@ -1253,6 +1277,7 @@ const CONFIG_DEFAULTS = {
   autoHandoff: true,
   autoExecute: false,
   inPlace: false,
+  showCard: true,
   autoHandoffPct: 0.9,
   readyCooldownMs: 600000,
   contextWindow: 262144,

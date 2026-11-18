@@ -52,6 +52,7 @@ window.__ModuleLoader__.load({
       autoHandoff: { label: "上下文阈值提醒（模型说一声）", hint: "勾上后：上下文到阈值时，模型会在回复开头告诉你「上下文已到 X%，建议打 /handoff」。不勾＝一声不吭（就算勾了自动交接也不提醒）。默认开。" },
       autoExecute: { label: "自动交接（提醒完插件自己交接）", hint: "勾上后：模型说完提醒，插件等 20 秒自己执行一次 /handoff（建新会话+命名+填卡），你不用手打。不勾＝只提醒、你手动打 /handoff。默认关。" },
       inPlace: { label: "原地交接（在当前对话里交接，不新建对话）", hint: "勾上后：自动交接到阈值时插件自己在当前会话里把老对话压成摘要接着干，不新建会话、不用你手打 /handoff；你手动打 /handoff 同样就地做。交接卡照样落盘存档。默认关（=去新对话）。" },
+      showCard: { label: "交接后显示交接卡", hint: "勾上后：自动交接完成时把交接卡存档路径播报给你；取消勾选＝完成后只安静说「已压缩」，不报卡片路径。默认开。" },
       handoffGroup: { label: "交接行为", hint: "这三条一起决定「上下文到阈值之后发生什么」：先要不要提醒，再要不要插件自己接手，最后要不要换对话。" },
       autoHandoffPct: { label: "自动交接阈值 (%)", hint: "可填 50–95，默认 90；超出范围会自动夹到 50 或 95。" },
       readyPct: { label: "触发阈值 (%)", hint: "inputTokens ÷ 窗口 ≥ 这个百分比就自动备好。填 0–100，如 70。" },
@@ -81,6 +82,7 @@ window.__ModuleLoader__.load({
       autoHandoff: { label: "Context threshold reminder (model speaks up)", hint: "When on, crossing the threshold makes the model open its reply with \"context at X%, consider /handoff\". Off = stays silent (even if auto-handoff is on). On by default." },
       autoExecute: { label: "Auto-handoff (plugin runs it after the reminder)", hint: "When on, after the reminder the plugin waits 20s and runs a real /handoff itself (create + name + seed card) — no typing needed. Off = reminder only, you type /handoff. Off by default." },
       inPlace: { label: "In-place handoff (manual /handoff stays in this chat)", hint: "When on, typing /handoff does NOT create a new chat — it compacts this session's old messages into a summary and you keep going here; the card is still archived to disk. Auto-handoff is unaffected (always goes to a new chat). Off by default." },
+      showCard: { label: "Show handoff card after handoff", hint: "When on, the auto-handoff completion notice includes the archived card path; when off, it just says compacted quietly. On by default." },
       handoffGroup: { label: "Handoff behaviour", hint: "These three together decide what happens once context crosses the threshold: whether the model speaks up, whether the plugin acts on its own, and whether it switches chats." },
       autoHandoffPct: { label: "Auto-handoff threshold (%)", hint: "Range 50–95, default 90; out-of-range values are clamped to 50 or 95." },
       readyPct: { label: "Trigger threshold (%)", hint: "inputTokens ÷ window ≥ this percent triggers auto-ready. 0–100, e.g. 70." },
@@ -186,7 +188,8 @@ window.__ModuleLoader__.load({
           h("div", { style: groupSubStyle }, hint("handoffGroup")),
           boolRow("autoHandoff", value.autoHandoff, (v) => update("autoHandoff", v), groupRowStyle),
           boolRow("autoExecute", value.autoExecute, (v) => update("autoExecute", v), groupRowStyle),
-          boolRow("inPlace", value.inPlace, (v) => update("inPlace", v), groupRowLastStyle)),
+          boolRow("inPlace", value.inPlace, (v) => update("inPlace", v), groupRowStyle),
+          boolRow("showCard", value.showCard, (v) => update("showCard", v), groupRowLastStyle)),
         textRow("autoHandoffPct", value.autoHandoffPct === undefined ? "" : Math.round(Number(value.autoHandoffPct) * 100), (v) => {
           const n = Number(v);
           if (!Number.isFinite(n) || v.trim() === "") return update("autoHandoffPct", null);
