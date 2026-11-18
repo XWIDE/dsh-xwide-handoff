@@ -1226,13 +1226,35 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
     return;
   }
   try {
-    // [18 2026-11-19] 用户点名「交接后百分比要掉下来」：自动路径补真压缩——用注入通道捕获的 agent
-    //   直调宿主 scope.compaction.compactNow（宿主自动压缩本身就在轮中发起，同机制；不等待空闲）。
-    let compacted = { count: 0, tokens: 0, skipped: "无agent引用，未压缩" };
+    // [18b 2026-11-19] 用户原话「交接时间应该是几十秒才行，不然太长了没有意义」。实测：compactNow 在
+    //   单槽引擎上被活跃对话排队，4 分+未返回（19:11:53→19:16）。改序：先落卡(32ms)＋立刻播报，
+    //   压缩放后台跑（对话空闲时自然轮到它），压完再播报一次——交接本体＝秒级，百分比随后自己掉。
+    const card = buildCard({
+      title: "自动交接（原地，插件自动发起）",
+      sourceId: sid,
+      childId: "(原地)",
+      notes: `自动交接：上下文已到 ${pct}%（阈值 ${((config.autoHandoffPct ?? 0.7) * 100).toFixed(0)}% 触发），插件就地落卡；压缩在后台执行。`,
+      messages: recentUserMessages(session, config.recentUserMessages),
+      compacted: { skipped: "压缩在卡片落盘后后台执行（本地引擎排队）" },
+      renamedBy: "",
+      seq: 0,
+      files: changedFiles(session),
+      usage: usageOf(session),
+      sections: config.cardSections,
+    });
+    const cardFile = join(cardDir(session), `handoff-inplace-auto-${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
+    mkdirSync(dirname(cardFile), { recursive: true });
+    writeFileSync(cardFile, `${card}\n`, "utf8");
+    dbg(`${tag}完成(卡片落盘) ${sid} -> ${cardFile}`);
+    pushNotice(sid, config.showCard === false
+      ? "自动交接完成：本会话继续；压缩在后台跑，压完上下文百分比会自动降。"
+      : `自动交接完成：交接卡已存档 ${cardFile}；压缩在后台跑，压完上下文百分比会自动降，不用你等。`);
+    // 后台压缩：不阻塞交接本体；完成/失败都记日志，成功再播报一次。
     const agent = agentRef.get(sid);
     if (config.inPlace && agent) {
+      const t0 = Date.now();
       try {
-        dbg(`${tag}压缩开始 ${sid}`);
+        dbg(`${tag}压缩开始(后台) ${sid}`);
         const result = await new Promise((res, rej) => {
           let done = false;
           try {
@@ -1248,33 +1270,13 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
             if (!done) { done = true; rej(e); }
           }
         });
-        if (result) compacted = { count: (result.shadowedSeqs || []).length, tokens: result.shadowedTokenCount };
-        dbg(`${tag}压缩返回 ${sid} count=${compacted.count} tokens=${compacted.tokens}`);
+        const n = result ? (result.shadowedSeqs || []).length : 0;
+        dbg(`${tag}压缩返回(后台) ${sid} count=${n} 用时ms=${Date.now() - t0}`);
+        pushNotice(sid, `后台压缩完成：已压 ${n} 条，上下文已瘦身。`);
       } catch (error) {
-        compacted = { skipped: String((error && error.code) || (error && error.message) || error) };
-        dbg(`${tag}压缩失败 ${sid} ${String((error && error.message) || error)}`);
+        dbg(`${tag}压缩失败(后台) ${sid} ${String((error && error.code) || (error && error.message) || error)} 用时ms=${Date.now() - t0}`);
       }
     }
-    const card = buildCard({
-      title: "自动交接（原地，插件自动发起）",
-      sourceId: sid,
-      childId: "(原地)",
-      notes: `自动交接：上下文已到 ${pct}%（阈值 ${((config.autoHandoffPct ?? 0.7) * 100).toFixed(0)}% 触发），插件就地落卡＋压缩。`,
-      messages: recentUserMessages(session, config.recentUserMessages),
-      compacted,
-      renamedBy: "",
-      seq: 0,
-      files: changedFiles(session),
-      usage: usageOf(session),
-      sections: config.cardSections,
-    });
-    const cardFile = join(cardDir(session), `handoff-inplace-auto-${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
-    mkdirSync(dirname(cardFile), { recursive: true });
-    writeFileSync(cardFile, `${card}\n`, "utf8");
-    dbg(`${tag}完成(卡片落盘) ${sid} -> ${cardFile}`);
-    pushNotice(sid, config.showCard === false
-      ? `自动交接完成：已压 ${compacted.count || 0} 条，上下文已瘦身，本会话继续。`
-      : `自动交接完成：已压 ${compacted.count || 0} 条，交接卡已存档 ${cardFile}，本会话继续。`);
   } catch (error) {
     dbg(`${tag}失败(写卡) ${sid}：${String((error && error.message) || error)}`);
   }
