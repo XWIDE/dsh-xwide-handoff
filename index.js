@@ -480,7 +480,22 @@ async function runHandoff(ctx, config, invocation) {
     } catch (error) {
       inplaceErr = String((error && error.message) || error);
     }
-    const cNote = compacted === null ? "未压缩" : compacted.skipped ? `压缩跳过（${compacted.skipped}）` : `已压 ${compacted.count} 条（约 ${compacted.tokens} tokens）`;
+    // [dsh-fix 2026-11-19] 手动 /handoff 也走快速翻篇：卡片落盘后立刻 shadow 老历史（零 LLM、毫秒级），
+    //   百分比当场下降。翻篇失败不影响卡片与命令成功（原因如实写进返回文案）。
+    let flipNote = "";
+    if (agent && typeof fastFlipInPlace === "function") {
+      const fr = await fastFlipInPlace({
+        agent,
+        session,
+        cardText: inplaceCard,
+        retainTokens: config.flipRetainTokens ?? 30000,
+        dbg,
+      });
+      flipNote = fr.ok ? `已翻篇 ${fr.shadowed} 条（约 ${fr.tokens} tokens，${fr.ms}ms）` : `翻篇未执行（${fr.reason}）`;
+    } else {
+      flipNote = "翻篇未执行（无 agent 引用）";
+    }
+    const cNote = `零 LLM 压缩，${flipNote}`;
     return { kind: "success", text: `dsh-xwide-handoff: 原地交接完成——${cNote}；卡片存档 ${inplaceFile}${inplaceErr ? `（写盘失败：${inplaceErr}）` : ""}。本会话继续，未新建会话。` };
   }
 
