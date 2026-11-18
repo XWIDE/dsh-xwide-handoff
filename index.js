@@ -1041,11 +1041,18 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
       if (event.type === "assistant/message") {
         const u = event.data && event.data.usage;
         if (u && Number.isFinite(u.inputTokens)) {
-          used.set(sid, u.inputTokens);
-          dbg(`usage记录 ${sid} inputTokens=${u.inputTokens}`);
+          // 口径修复(2026-11-19 实测)：本机宿主 inputTokens=单请求增量（缓存命中不计入，~3k），
+          // 全量上下文=totalTokens−outputTokens（实测 76647−245=76402≈GUI%读数）；旧口径 ratio 永远 2%，自动交接从不触发。
+          const promptTotal = Number.isFinite(u.totalTokens)
+            ? Math.max(u.inputTokens, u.totalTokens - (Number.isFinite(u.outputTokens) ? u.outputTokens : 0))
+            : u.inputTokens;
+          used.set(sid, promptTotal);
+          // 探针(2026-11-19)：本机宿主 usage 是单请求增量（缓存命中不计入），ratio 永远到不了阈值；
+          // 先 dump 完整字段形状，量清哪个字段＝全量上下文，再改口径。
+          dbg(`usage记录 ${sid} ${JSON.stringify(u).slice(0, 400)}`);
           uploadGuardOnce(session, config.uploadGuardMaxBytes, dbg);
           // 用量一到就判阈值：诊断日志证实本机宿主不发 turn/end（2026-11-18），原 turn/end 路径保留兜底
-          const r = u.inputTokens / config.contextWindow;
+          const r = promptTotal / config.contextWindow;
           const t = Date.now();
           if ((config.autoHandoff || config.autoExecute) && !handed.has(sid) && r >= config.autoHandoffPct && t - lastAt >= config.readyCooldownMs) {
             handed.add(sid);
@@ -1056,7 +1063,7 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
             // 勾了「自动交接」：先让模型说一声，20 秒后插件自己执行一次 /handoff（建新会话＋填卡）
             if (config.autoExecute) {
               setTimeout(() => {
-                autoReadyOnce(ctx, config, sid, u.inputTokens, "handoff").catch((error) => {
+                autoReadyOnce(ctx, config, sid, promptTotal, "handoff").catch((error) => {
                   console.log(`[xwide-handoff] 自动交接失败(usage路径)：${String((error && error.message) || error)}`);
                 });
               }, 20000);
