@@ -1188,8 +1188,8 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
     commandId: undefined,
   };
   // compact:false —— 源会话已到阈值，再压一次只会多花时间；卡片本身就是摘要式的。
-  // inPlace:false —— 「勾了自动交接＝出去到新对话」（用户 2026-11-18 原话），原地模式只管手动 /handoff。
-  const result = await runHandoff(ctx, { ...config, compact: false, inPlace: false }, invocation);
+  // inPlace 跟随勾选 —— 「自己就在当前对话交接，不新建对话，不用你手打 /handoff」（用户 2026-11-19 拍板，推翻 11-18 的「自动交接始终去新对话」）。
+  const result = await runHandoff(ctx, { ...config, compact: false }, invocation);
   const ok = Boolean(result && result.kind === "success");
   console.log(
     `[xwide-handoff] ${tag}${ok ? "完成" : `未完成（${String((result && result.text) || "").slice(0, 160)}）`}`,
