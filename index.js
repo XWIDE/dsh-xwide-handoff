@@ -1008,6 +1008,15 @@ function attachSelfHeal(ctx, config) {
 //   触发点：turn/end（一轮结束，绝不在半途打断）。
 //   保险：按会话只备一次（armed）、全局冷却、总开关 config.autoReady（默认关）。
 
+// 诊断通道（模块级，2026-11-19）：桌面宿主 stdout 不落盘，关键判定点写进工作区文件。
+// 必须模块级——曾因定义在 attachAutoReady 闭包内，顶层函数 autoReadyOnce 调用即 "dbg is not defined"。
+const DBG_FILE = join(homedir(), "Documents", "deepseek-harness", "default-workspace", "_xwh_debug.log");
+function dbg(msg) {
+  try {
+    appendFileSync(DBG_FILE, new Date().toISOString() + " " + msg + "\n");
+  } catch {}
+}
+
 function attachAutoReady(ctx, config) {
   if (!config.autoReady && !config.autoHandoff && !config.autoExecute) return;
   const used = new Map(); // sid -> 最近一次 inputTokens
@@ -1017,13 +1026,7 @@ function attachAutoReady(ctx, config) {
   const pendingSay = new Map(); // sid -> 上下文百分比字符串（到阈值登记，模型下次请求开口说一声）
 const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，防中途step消耗）
   let lastAt = 0;
-  // 临时诊断通道：桌面宿主 stdout 不落盘，把关键判定点写进工作区文件（定位断点用）
-  const dbgFile = join(homedir(), "Documents", "deepseek-harness", "default-workspace", "_xwh_debug.log");
-  const dbg = (msg) => {
-    try {
-      appendFileSync(dbgFile, new Date().toISOString() + " " + msg + "\n");
-    } catch {}
-  };
+  // dbg 已提升到模块顶层（见上），此处直接引用
   dbg(`attachAutoReady 装载 autoHandoff=${config.autoHandoff} autoExecute=${config.autoExecute} inPlace=${config.inPlace} pct=${config.autoHandoffPct} window=${config.contextWindow}`);
   if (config.autoReady)
     console.log(
