@@ -1247,36 +1247,11 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
     writeFileSync(cardFile, `${card}\n`, "utf8");
     dbg(`${tag}完成(卡片落盘) ${sid} -> ${cardFile}`);
     pushNotice(sid, config.showCard === false
-      ? "自动交接完成：本会话继续；压缩在后台跑，压完上下文百分比会自动降。"
-      : `自动交接完成：交接卡已存档 ${cardFile}；压缩在后台跑，压完上下文百分比会自动降，不用你等。`);
-    // 后台压缩：不阻塞交接本体；完成/失败都记日志，成功再播报一次。
-    const agent = agentRef.get(sid);
-    if (config.inPlace && agent) {
-      const t0 = Date.now();
-      try {
-        dbg(`${tag}压缩开始(后台) ${sid}`);
-        const result = await new Promise((res, rej) => {
-          let done = false;
-          try {
-            ctx.inject(["compaction"], (scope) => {
-              if (done) return;
-              done = true;
-              scope.compaction.compactNow(agent, new AbortController().signal, `auto-handoff-${Date.now()}`).then(
-                (r) => res(r),
-                (e) => rej(e)
-              );
-            });
-          } catch (e) {
-            if (!done) { done = true; rej(e); }
-          }
-        });
-        const n = result ? (result.shadowedSeqs || []).length : 0;
-        dbg(`${tag}压缩返回(后台) ${sid} count=${n} 用时ms=${Date.now() - t0}`);
-        pushNotice(sid, `后台压缩完成：已压 ${n} 条，上下文已瘦身。`);
-      } catch (error) {
-        dbg(`${tag}压缩失败(后台) ${sid} ${String((error && error.code) || (error && error.message) || error)} 用时ms=${Date.now() - t0}`);
-      }
-    }
+      ? "自动交接完成：本会话继续；旧对话由宿主自动压缩在接近满时接管。"
+      : `自动交接完成：交接卡已存档 ${cardFile}，全程零压缩请求（秒级）；旧对话瘦身由宿主自动压缩在接近满时接管。`);
+    // [18c 2026-11-19] 用户原话「并不希望是用什么压缩的方式」「跟手动交接一样速度」。实测读数：
+    //   手动(18:53)与自动(19:11)发出的 compactNow 均无返回行＝宿主压缩在本机从未成功；
+    //   用户记忆的"手动快"＝旧版纯落卡（秒级，不碰压缩）。故删除后台压缩调用，交接＝落卡+播报。
   } catch (error) {
     dbg(`${tag}失败(写卡) ${sid}：${String((error && error.message) || error)}`);
   }
