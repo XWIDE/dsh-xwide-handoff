@@ -440,6 +440,7 @@ async function runHandoff(ctx, config, invocation) {
   let compacted = null;
   if (config.compact || config.inPlace) {
     try {
+      dbg(`压缩开始 ${session.header ? session.header.id : "?"} commandId=${String(invocation.commandId)}`);
       // [dsh-fix 2026-11-18] 直取 ctx.compaction 报 cannot get property "compaction" without inject；
       //   顶层 inject 加 compaction 会让 preset 标 broken（:31 注释是实测教训），改惰性 ctx.inject，
       //   与本页 systemPrompt/settings 注入同一套路。拿不到照旧走 skipped 如实上报。
@@ -449,7 +450,11 @@ async function runHandoff(ctx, config, invocation) {
           ctx.inject(["compaction"], (scope) => {
             if (done) return;
             done = true;
-            scope.compaction.compactNow(agent, invocation.signal, invocation.commandId).then(res, rej);
+            dbg(`压缩服务到手(compactNow开跑) ${session.header ? session.header.id : "?"}`);
+            scope.compaction.compactNow(agent, invocation.signal, invocation.commandId).then(
+              (r) => { dbg(`compactNow返回 ${session.header ? session.header.id : "?"}`); res(r); },
+              (e) => { dbg(`compactNow报错 ${session.header ? session.header.id : "?"} ${String((e && e.message) || e)}`); rej(e); }
+            );
           });
         } catch (e) {
           if (!done) { done = true; rej(e); }
