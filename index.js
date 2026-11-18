@@ -1184,31 +1184,31 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
   const tag = mode === "handoff" ? "自动交接" : "自动备好";
   dbg(`${tag}进入 ${sid} tokens=${tokens} inPlace=${config.inPlace}`);
   const ctl = typeof ctx.get === "function" ? ctx.get("sessionController") : void 0;
-  if (!ctl || typeof ctl.resolveAgent !== "function") {
-    dbg(`${tag}跳过：sessionController 服务不可用`);
-    return;
-  }
-  const agent = await ctl.resolveAgent(sid);
-  const session = agent && agent.session;
-  if (!session) {
-    dbg(`${tag}跳过：拿不到会话对象`);
+  if (!ctl || typeof ctl.prompt !== "function") {
+    dbg(`${tag}跳过：sessionController.prompt 服务不可用`);
     return;
   }
   const pct = ((tokens / config.contextWindow) * 100).toFixed(0);
+  // [dsh-fix 2026-11-19] 不再自拼 invocation 直接调 runHandoff：resolveAgent(sid) 要等会话 agent
+  //   空闲，而自动触发恰恰发生在模型活跃轮中间 → promise 永挂（实测 18:06/18:24 两次「进入」后无下文）。
+  //   改走官方 prompt 通道（= GUI 发一条消息同一路，手动卡片投递验证过的通道②）：宿主排队到空闲、
+  //   派发完整 invocation（带 commandId），速度/行为与手动打 /handoff 完全一致。
   const head = mode === "handoff"
-    ? `（自动交接：源会话上下文已到 ${pct}%，这是自动执行的一次 /${config.commandName}，从这里接着做）`
+    ? `/${config.commandName}（自动交接：源会话上下文已到 ${pct}%，插件自动发起，就地执行不用新建对话）`
     : `（自动备好：源会话上下文已到 ${pct}%，新会话已建好，从这里接着做）`;
-  const invocation = {
-    agent,
-    rawInput: head,
-    signal: new AbortController().signal,
-    commandId: undefined,
-  };
-  // compact:false —— 源会话已到阈值，再压一次只会多花时间；卡片本身就是摘要式的。
-  // inPlace 跟随勾选 —— 「自己就在当前对话交接，不新建对话，不用你手打 /handoff」（用户 2026-11-19 拍板，推翻 11-18 的「自动交接始终去新对话」）。
-  const result = await runHandoff(ctx, { ...config, compact: false }, invocation);
-  const ok = Boolean(result && result.kind === "success");
-  dbg(`${tag}${ok ? "完成" : `未完成（${String((result && result.text) || "").slice(0, 160)}）`} ${sid}`);
+  try {
+    await ctl.prompt(
+      {
+        sessionId: sid,
+        requestId: `xwide-auto-${mode}-${randomUUID()}`,
+        content: [{ type: "text", text: head }],
+      },
+      new AbortController().signal,
+    );
+    dbg(`${tag}已注入指令(prompt通道) ${sid} ${head.slice(0, 40)}`);
+  } catch (error) {
+    dbg(`${tag}失败(prompt通道) ${sid}：${String((error && error.message) || error)}`);
+  }
 }
 
 // ---------- 设置表单（harness 0.1.7 Config 驱动模型，照 @falling-ts/dsh-force-compact）----------
