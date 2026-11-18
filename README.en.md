@@ -9,7 +9,7 @@
 
 [中文（主页，先显示中文）](README.md) · **English** · [Install & Usage Guide](docs/INSTALL.md) · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
 
-> **Status: v0.2.5 · beta.** The core flow (`/handoff` → card → new session → auto-numbered title → pin) runs daily on the author's machine; cross-machine install paths (notably `childMode: none`) are **not verified on a second box** yet. Two-step install, the config table and five troubleshooting cases live in the [Install & Usage Guide](docs/INSTALL.md).
+> **Status: v0.2.8 · beta.** 0.2.8 adds the **upload-backlog guard**: when a session is bricked by HTTP 413 (the official `session-log-deepseek` upload backlog exceeding the 8 MiB per-request field cap), the plugin auto-writes a delivery watermark to clear the backlog — the session heals itself, no manual file surgery needed. See the [changelog](CHANGELOG.md). The core flow (`/handoff` → card → new session → auto-numbered title → pin) runs daily on the author's machine; cross-machine install paths (notably `childMode: none`) are **not verified on a second box** yet. Two-step install, the config table and five troubleshooting cases live in the [Install & Usage Guide](docs/INSTALL.md).
 
 ---
 

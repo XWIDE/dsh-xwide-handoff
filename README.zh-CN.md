@@ -4,7 +4,7 @@
 
 [English README](README.md) · [安装与使用指南](docs/INSTALL.md) · [更新日志](CHANGELOG.md) · [MIT License](LICENSE)
 
-> **状态：v0.2.0 · beta。** 核心流程（`/handoff` → 交接卡 → 新会话 → 自增命名 → 置顶）在作者机器上长期在用；
+> **状态：v0.2.8 · beta。** 0.2.8 新增**上传积压守卫**：会话因官方 `session-log-deepseek` 上传积压超 8 MiB 被网关 413 堵死时，插件自动补写交付水印把积压清掉，会话自己会通。详见 [更新日志](CHANGELOG.md)。核心流程（`/handoff` → 交接卡 → 新会话 → 自增命名 → 置顶）在作者机器上长期在用；
 > 跨机器安装路径（尤其 `childMode: none`）**尚未在第二台机器验证**。安装两步、配置项表、五条故障排查见
 > [安装与使用指南](docs/INSTALL.md)。
 
