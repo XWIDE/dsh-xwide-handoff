@@ -38,6 +38,7 @@ export const inject = ["commands", "sessions"];
 //   卡片是新会话第一条消息，12K 字符 ≈ 4K token，对 262K 窗口毫无压力。
 const MAX_CARD_CHARS = 12000;
 const MAX_MESSAGE_CHARS = 800;
+const lastHandoffAt = new Map(); // sid -> 最近一次交接落卡时间（手动/自动共享，冷却闸共用）
 const NAMES_FILE = join(homedir(), ".dsh", "xwide-handoff-names.json");
 // [dsh-fix 2026-11-18 用户原话「数据不要强制存在C盘，数据应该存在工作区里面」]
 //   默认挪到工作区 .dsh\（宿主主进程 cwd=工作区，_xwh_debug.log 实测落点）；C 盘旧文件自动读，序号不断档。
@@ -485,6 +486,7 @@ async function runHandoff(ctx, config, invocation) {
     let flipNote = "";
     if (agent && typeof fastFlipInPlace === "function") {
       pendingFlip.set(sourceId, { cardText: inplaceCard, retainTokens: config.flipRetainTokens ?? 30000 });
+    lastHandoffAt.set(sourceId, Date.now());
       flipNote = "翻篇将在本回合结束后立刻自动执行（百分比当场下降，零 LLM 毫秒级）";
     } else {
       flipNote = "翻篇未排队（无 agent 引用）";
@@ -1054,7 +1056,7 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
           // 用量一到就判阈值：诊断日志证实本机宿主不发 turn/end（2026-11-18），原 turn/end 路径保留兜底
           const r = promptTotal / config.contextWindow;
           const t = Date.now();
-          if ((config.autoHandoff || config.autoExecute) && !handed.has(sid) && r >= config.autoHandoffPct && t - lastAt >= config.readyCooldownMs) {
+          if ((config.autoHandoff || config.autoExecute) && !handed.has(sid) && r >= config.autoHandoffPct && t - Math.max(lastAt, lastHandoffAt.get(sid) || 0) >= config.readyCooldownMs) {
             handed.add(sid);
             lastAt = t;
             // 提醒勾管开口，自动勾管干活——只勾自动不勾提醒＝悄悄交接不说话
@@ -1090,7 +1092,7 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
       //    提示横幅由浏览器半弹；插件历史上合成写会话事件会撞回放号 → corrupt，见 :660-680 注释，
       //    所以提示绝不走 session.append，只走浏览器 DOM。）
       if ((config.autoHandoff || config.autoExecute) && !handed.has(sid) && ratio >= config.autoHandoffPct) {
-        if (now - lastAt < config.readyCooldownMs) {
+        if (now - Math.max(lastAt, lastHandoffAt.get(sid) || 0) < config.readyCooldownMs) {
           console.log(`[xwide-handoff] 自动提示：${sid} 已达 ${(ratio * 100).toFixed(1)}%，但冷却中，跳过`);
           return;
         }
