@@ -2,6 +2,23 @@
 
 本文件记录 `dsh-xwide-handoff` 的可见变更。日期为本地时间。
 
+## 0.3.0 — 2026-11-19
+
+### 修复
+- **★原地交接后第一条消息被吞（要发两次才回复）。** 现象（用户报障）：`/handoff` 完成后发的第一条普通消息没有回复，敲第二条才醒。根因（读官方引擎注释实锤）：翻篇是在 `/handoff` 自己这个活动回合里当场写压缩括号的，这种括号绝不能横跨/嵌进活动回合边界——写完宿主状态机没归位。修法：`/handoff` 卡片照写、播报照发，翻篇改挂官方 `agent/status` 的 **idle 瞬间**消费（与官方 turn-end 强制压缩同一挂载点：所有回合已闭合、下一条人类消息之前），`agent/pre-step` 留兜底防漏单（任何异常放行请求，绝不卡步骤）。括号写在活动回合之外 → 不吞消息；翻篇仍是零 LLM 毫秒级。
+- 中间版本 0.2.9（翻篇排队到 pre-step）能修吞消息但百分比不当场降（要等下一条消息触发），被 0.3.0 的 idle 方案取代。
+
+### 行为变更
+- **交接完百分比当场下降。** 翻篇在 `/handoff` 回合一闭合就执行，用户在发下一条消息之前就能看到上下文占比掉下来；弹条同步播报「原地翻篇完成：已压 N 条」。
+
+### 判定器（用户实测通过）
+- 重启后跑 `/handoff`：不发任何消息，百分比当场降 ✓（日志 `翻篇完成 shadow=43 tokens=26063 用时ms=91`，零降级行）。
+- 交接后第一条普通消息直接有回复 ✓（不再打两次）。
+- 手动/自动交接卡片与 ~20s 流程零改动 ✓。
+
+### 维护
+- 调试日志路径从个人工作区硬编码改为 `~/.dsh/_xwh_debug.log`（发布包内不再含个人机器路径）。
+
 ## 0.2.8 — 2026-11-18
 
 ### 新增
@@ -54,7 +71,7 @@
 ## 0.2.3 — 2026-10-17
 
 ### 修复
-- **★交接卡序号不再全局共用一个计数器，改为按项目分组各自计数。** 现象：新开项目的**第一张**交接卡标题直接叫 `_32`（本机实测 `Strata0.145机器模型升级提升评估_32`）。根因：序号的桶键是**工作目录**（调用处原为 `claimSeq(config.counterFile, cwdKey)`），而 `dsh-project-groups` 把所有项目的工作目录都落在同一个基工作区（注入的 project-context 原话 "all projects' workspace directories fall into a single base workspace"）→ 所有项目共用 `"...\default-workspace"` 这一个桶，`~\.dsh\xwide-handoff-counter.json` 里该桶已计到 32。
+- **★交接卡序号不再全局共用一个计数器，改为按项目分组各自计数。** 现象：新开项目的**第一张**交接卡标题直接叫 `_32`（本机实测 `Strata0.145机器模型升级提升评估_32`）。根因：序号的桶键是**工作目录**（调用处原为 `claimSeq(config.counterFile, cwdKey)`），而 `dsh-project-groups` 把所有项目的工作目录都落在同一个基工作区（注入的 project-context 原话 "all projects' workspace directories fall into a single base workspace"）→ 所有项目共用同一个基工作区这一个桶，`~\.dsh\xwide-handoff-counter.json` 里该桶已计到 32。
 - **修法**：新增 `resolveBucketKey(ctx, sourceId, cwdKey)`（`index.js:159`），取数通道与下方「归入项目分组」块同源（`ctx.get("projectController").baseline()` → `assignments[sessionId] = projectId`）。已分组 → 桶键 `proj:<projectId>#<项目名>`，**新项目首张卡从 `_01` 起**；未分组 / 服务不可用 / 任何异常 → 退回 cwd 键＝旧行为，老会话不断号。`/handoff` 回执同步标明分桶依据（`index.js:867`）。
 
 ### 判定器（三层全绿）

@@ -512,7 +512,7 @@ window.__ModuleLoader__.load({
         // 一变 seen=空 → 历史 HANDOFF-PAYLOAD-V1 被逐条重放（批量建会话 + 改名）→ sessions.list
         // 变化 → subscribe 回调再扫 = 正反馈死循环 → 渲染进程持续重算 → 界面卡死 / 心跳丢 /
         // 断开连接再重连。当前 childMode=create（服务端直接建会话），浏览器半边不需要自动扫描。
-        // 恢复方式：把下面 9 行取消注释（原件备份在 default-workspace\_fix-backup-20261013-1835\client.js.bak）。
+        // 恢复方式：把下面 9 行取消注释（改动前的原件在 git 历史里，任意版本可检出）。
         // try {
         //   ctx.on("session/create", () => setTimeout(scan, 1500));
         // } catch {}

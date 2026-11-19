@@ -8,7 +8,7 @@
 - 红线：不破坏手动 /handoff（稳定 ~20s）
 
 ## 机制（已从 force-compact 源码验证可行性）
-参照 `C:\Users\Administrator\.dsh\profiles\desktop\node_modules\@falling-ts\dsh-force-compact\src\engine\builtin.js`（文件头注释＝协议全文）：
+参照官方插件 `@falling-ts/dsh-force-compact` 的 `src/engine/builtin.js`（文件头注释＝协议全文）：
 
 1. 持久化原语 = 给会话 append 一条 `user/message`，带 `surfaceOp:{op:'replace'}`，shadow 老 seq 范围。
 2. 前后必须用官方事件词表括号：`compaction/start → compaction/summary → user/message{replace} → compaction/end`。

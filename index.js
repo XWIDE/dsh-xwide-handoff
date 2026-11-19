@@ -1007,7 +1007,7 @@ function attachSelfHeal(ctx, config) {
 
 // 诊断通道（模块级，2026-11-19）：桌面宿主 stdout 不落盘，关键判定点写进工作区文件。
 // 必须模块级——曾因定义在 attachAutoReady 闭包内，顶层函数 autoReadyOnce 调用即 "dbg is not defined"。
-const DBG_FILE = join(homedir(), "Documents", "deepseek-harness", "default-workspace", "_xwh_debug.log");
+const DBG_FILE = join(homedir(), ".dsh", "_xwh_debug.log");
 function dbg(msg) {
   try {
     appendFileSync(DBG_FILE, new Date().toISOString() + " " + msg + "\n");
