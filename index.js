@@ -61,6 +61,17 @@ function unwrapRef(value) {
   return value && typeof value === "object" && typeof value.get === "function" ? value.get() : value;
 }
 
+// [dsh-fix 2026-11-19 23:30] 「取消勾选仍原地」根因：cfg() 在 apply() 装载时把 live ref 解引用成
+//   一次性快照，设置页之后改的值只落盘不进运行进程 → 必须重启才生效（用户要的「勾上就能用」不成立）。
+//   本函数保留 Loader 传入的 live ref，在每次交接决策前重新解引用刷新快照。
+let RAW_CONFIG = null;
+function refreshConfig(config) {
+  if (!RAW_CONFIG) return;
+  try {
+    Object.assign(config, cfg(RAW_CONFIG));
+  } catch (_) { /* 刷新失败沿用旧快照，绝不炸交接 */ }
+}
+
 function cfg(config) {
   const src = config && typeof config === "object" ? config : {};
   const c = {};
@@ -459,6 +470,7 @@ async function runHandoff(ctx, config, invocation) {
 
   // [dsh-fix 2026-11-18] 原地交接模式（老版做法，用户点名保留）：压缩已完成，卡片落盘即收工，
   //   不建新会话、不命名、不注入——同一个会话接着干。
+  refreshConfig(config); // [dsh-fix 2026-11-19] 命令执行瞬间重读勾选
   if (config.inPlace) {
     const inplaceCard = buildCard({
       title: "原地交接（不建新会话）",
@@ -1065,10 +1077,12 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
             // 勾了「自动交接」：先让模型说一声，20 秒后插件自己执行一次 /handoff（建新会话＋填卡）
             if (config.autoExecute) {
               dbg(`已排定自动交接(usage路径，20 秒后执行) ${sid} ${(r * 100).toFixed(0)}%`);
-              pushNotice(sid, `自动交接已排定：上下文约 ${(r * 100).toFixed(0)}%，约 20 秒后插件自动落交接卡（原地，不用你手打 /${config.commandName}）。`);
+              refreshConfig(config); // [dsh-fix 2026-11-19] 排定文案按当下勾选渲染
+              pushNotice(sid, `自动交接已排定：上下文约 ${(r * 100).toFixed(0)}%，约 20 秒后插件自动交接（${config.inPlace ? "原地" : "建新对话"}，不用你手打 /${config.commandName}）。`);
               setTimeout(() => {
-                dbg(`定时器开火(usage路径) ${sid}`);
-                autoReadyOnce(ctx, config, sid, promptTotal, "handoff").catch((error) => {
+                refreshConfig(config); // [dsh-fix 2026-11-19] 开火瞬间重读勾选，取消＝走建新会话老路
+                dbg(`定时器开火(usage路径) ${sid} inPlace=${config.inPlace}`);
+                autoHandoffRun(ctx, config, sid, session, promptTotal).catch((error) => {
                   dbg(`自动交接失败(usage路径)：${String((error && error.message) || error)}`);
                 });
               }, 20000);
@@ -1102,9 +1116,12 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
         dbg(`到阈值登记开口 ${sid} pct=${(ratio * 100).toFixed(0)}`);
         // 勾了「自动交接」：先让模型说一声，20 秒后插件自己执行一次 /handoff（建卡＋建新会话）
         if (config.autoExecute) {
-          pushNotice(sid, `自动交接已排定：上下文约 ${(ratio * 100).toFixed(0)}%，约 20 秒后插件自动落交接卡（原地，不用你手打 /${config.commandName}）。`);
+          refreshConfig(config); // [dsh-fix 2026-11-19] 排定文案按当下勾选渲染
+          pushNotice(sid, `自动交接已排定：上下文约 ${(ratio * 100).toFixed(0)}%，约 20 秒后插件自动交接（${config.inPlace ? "原地" : "建新对话"}，不用你手打 /${config.commandName}）。`);
           setTimeout(() => {
-            autoReadyOnce(ctx, config, sid, n, "handoff").catch((error) => {
+            refreshConfig(config); // [dsh-fix 2026-11-19] 开火瞬间重读勾选，取消＝走建新会话老路
+            dbg(`定时器开火(turn/end路径) ${sid} inPlace=${config.inPlace}`);
+            autoHandoffRun(ctx, config, sid, session, n).catch((error) => {
               console.log(`[xwide-handoff] 自动交接失败：${String((error && error.message) || error)}`);
             });
           }, 20000);
@@ -1213,6 +1230,25 @@ function pushNotice(sid, text) {
       if (ws.readyState === 1) ws.send(JSON.stringify({ sid, text }));
     } catch (_) { /* 单条推送失败忽略 */ }
   }
+}
+
+// [dsh-fix 2026-11-19 22:31] 自动交接此前把「原地」写死了：文案硬编码、调用只走 autoReadyOnce，
+//   完全没读 config.inPlace → 用户取消勾选后仍然原地压（原话「取消了勾选为什么还是原地交接」）。
+//   本刀按勾分叉：勾了＝原地落卡＋排队翻篇；没勾＝执行一次真正的 /handoff（按 childMode 建新会话）。
+async function autoHandoffRun(ctx, config, sid, session, tokens) {
+  refreshConfig(config); // [dsh-fix 2026-11-19] 分叉前最后一道：按当下勾选决定原地/建新会话
+  if (config.inPlace) {
+    return autoReadyOnce(ctx, config, sid, tokens, "handoff");
+  }
+  const result = await runHandoff(ctx, { ...config, compact: false, inPlace: false }, {
+    agent: { session },
+    commandId: "auto-timer",
+    rawInput: "",
+  });
+  const text = result && typeof result.text === "string" ? result.text : "(无返回文本)";
+  dbg(`自动交接(建新会话路径)完成 ${sid} kind=${result && result.kind} ${text.slice(0, 160)}`);
+  pushNotice(sid, `自动交接完成：${text.slice(0, 300)}`);
+  return result;
 }
 
 async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
@@ -1378,6 +1414,7 @@ const pendingFlip = new Map(); // sid -> { cardText, retainTokens }
 
 export function apply(ctx, rawConfig = {}) {
   const config = cfg(rawConfig);
+  RAW_CONFIG = rawConfig; // [dsh-fix 2026-11-19] 存 live ref，供 refreshConfig 决策前重解引用
   if (!config.enabled) {
     console.log("[xwide-handoff] disabled");
     return;

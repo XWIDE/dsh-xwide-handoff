@@ -34,8 +34,8 @@ window.__ModuleLoader__.load({
     const NS_SETTINGS = "dsh-xwide-handoff"; // 宿主设置命名空间 = 装载行 entry id
     // 设置页脚注（用户点名要「我的开发信息 / 版本号 / 支持的 harness 版本」）：
     // 版本号与 package.json:3 必须一字不差，发布时两处一起改。
-    const PLUGIN_VERSION = "0.3.0";
-    const PLUGIN_DATE = "2026-11-18";
+    const PLUGIN_VERSION = "0.3.2"; // [2026-11-19] 页脚常量随 package.json 对齐
+    const PLUGIN_DATE = "2026-11-19";
     // 支持的宿主：peerDependencies 声明 @deepseek-ai/dsh-app-plugin >= 0.1.7；
     // 括号里是本机实测读数（宿主安装目录 app.asar/package.json: name=@deepseek-ai/dsh-desktop version=0.2.2-rc.3）。
     const SUPPORTED_DSH = "≥ 0.1.7（本机实测 0.2.2-rc.3）";

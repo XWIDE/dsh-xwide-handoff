@@ -30,16 +30,22 @@ function randHex(n) {
 }
 
 // 简化版 currentOpenTurn（官方未导出）：反向扫事件找未闭合 turn/start 的 turn 号。
+// 返回 number＝当前打开的轮次；返回 null＝没有打开的轮次（翻篇发生在 turn/end 之后）。
+// 注意：compaction/start 与 compaction/end 的 turn 是**必填键**（会话格式 v4
+// disposition(["compactionId","turn"])），无轮次时必须显式写 null，不能省略该键——
+// 省略会让下次加载抛 SessionFormatError: compaction turn must be a non-negative safe integer，
+// 整个会话 brick（2026-11-19 session-d8838407 事故根因）。
 function openTurnOf(events) {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const e = events[i];
     if (!e || typeof e !== "object") continue;
-    if (e.type === "turn/end" || e.type === "turn/start") {
-      const t = e.data && Number.isFinite(e.data.turn) ? e.data.turn : undefined;
-      return e.type === "turn/start" ? t : undefined;
+    if (e.type === "turn/end") return null;
+    if (e.type === "turn/start") {
+      const t = e.data && Number.isSafeInteger(e.data.turn) ? e.data.turn : null;
+      return t;
     }
   }
-  return undefined;
+  return null;
 }
 
 // busy-lock：最后一个 session/end-seed 之后存在未闭合 compaction/start＝拒。
@@ -96,12 +102,22 @@ export async function fastFlipInPlace({ agent, session, cardText, retainTokens, 
   const surf = session.surface && Array.isArray(session.surface.nodes) ? session.surface.nodes : [];
   const fi = surf.indexOf(start), li = surf.lastIndexOf(end);
   if (fi < 0 || li < 0 || fi > li) { log(`翻篇跳过：边界已移动 ${start}..${end}`); return { ok: false, reason: "bounds-moved" }; }
+  // 选区不得覆盖 protected head（surface 首节点＝系统提示）：reader 加载时会拒绝
+  // （worker.cjs:12499 "compaction cannot shadow the protected system head"）
+  const headSeq = surf.length > 0 ? surf[0] : undefined;
+  if (Number.isInteger(headSeq) && start === headSeq) {
+    if (surf.length < 3) { log("翻篇跳过：选区只剩受保护的系统提示"); return { ok: false, reason: "protected-head" }; }
+    start = surf[1];
+    const fi2 = surf.indexOf(start), li2 = surf.lastIndexOf(end);
+    if (fi2 < 0 || li2 < 0 || fi2 > li2) { log("翻篇跳过：让开系统提示后边界失效"); return { ok: false, reason: "protected-head" }; }
+  }
   const events = session.snapshotEvents();
   if (hasOpenBracket(events)) { log("翻篇跳过：存在未闭合压缩括号"); return { ok: false, reason: "busy-lock" }; }
   const regionObj = { start, end };
   const projected = fc.builtin.projectRegion(session, regionObj);
   const shadowedSeqs = projected.shadowedSeqs;
   if (!Array.isArray(shadowedSeqs) || shadowedSeqs.length === 0) { log("翻篇跳过：选区无 shadow 节点"); return { ok: false, reason: "empty-region" }; }
+  if (Number.isInteger(headSeq) && shadowedSeqs.includes(headSeq)) { log("翻篇跳过：选区吞掉受保护的系统提示"); return { ok: false, reason: "protected-head" }; }
   let price = null;
   try { price = fc.builtin.priceRegionFromMeasurement(session, regionObj, measurement); } catch (e) { log(`翻篇跳过：计价抛错 ${String((e && e.message) || e)}`); }
   if (!Number.isFinite(price) || price <= 0) { log("翻篇跳过：计价不可用（拒写假价单）"); return { ok: false, reason: "no-price" }; }
@@ -113,7 +129,7 @@ export async function fastFlipInPlace({ agent, session, cardText, retainTokens, 
   const blocks = [{ type: "text", text: cardText }];
   const content = fc.summarizer.frameSummary(blocks);
   try {
-    const startEvent = session.append("compaction/start", { compactionId, ...(turn === undefined ? {} : { turn }) });
+    const startEvent = session.append("compaction/start", { compactionId, turn });
     let summaryEvent;
     try {
       summaryEvent = session.append("compaction/summary", {
@@ -126,7 +142,7 @@ export async function fastFlipInPlace({ agent, session, cardText, retainTokens, 
         model: "none",
       });
     } catch (e) {
-      session.append("compaction/end", { compactionId, ...(turn === undefined ? {} : { turn }), error: String((e && e.message) || e) });
+      session.append("compaction/end", { compactionId, turn, error: String((e && e.message) || e) });
       log(`翻篇失败(summary append)：${String((e && e.message) || e)}`); return { ok: false, reason: "append-summary" };
     }
     try {
@@ -140,10 +156,10 @@ export async function fastFlipInPlace({ agent, session, cardText, retainTokens, 
         sourceEventSeqs: [startEvent.seq, summaryEvent.seq, ...shadowedSeqs],
       });
     } catch (e) {
-      session.append("compaction/end", { compactionId, ...(turn === undefined ? {} : { turn }), error: String((e && e.message) || e) });
+      session.append("compaction/end", { compactionId, turn, error: String((e && e.message) || e) });
       log(`翻篇失败(replace append)：${String((e && e.message) || e)}`); return { ok: false, reason: "append-replace" };
     }
-    try { session.append("compaction/end", { compactionId, ...(turn === undefined ? {} : { turn }) }); }
+    try { session.append("compaction/end", { compactionId, turn }); }
     catch { log("警告：compaction/end 未落（下次加载可能显锁）"); }
   } catch (e) {
     log(`翻篇失败(start append)：${String((e && e.message) || e)}`); return { ok: false, reason: "append-start" };
