@@ -10,3 +10,4 @@ settings.yaml
 handoff/
 .handoff-counter.json
 .env
+screenshots.json
