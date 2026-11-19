@@ -21,7 +21,7 @@
      index.js  naming.js  client.js  cordis.patch.yml  package.json ...
    ```
 
-   - Windows 桌面版默认 profile：`C:\Users\<你>\.dsh\profiles\desktop\`
+   - Windows 桌面版默认 profile：`~\.dsh\profiles\desktop\`
    - **目录名随意，但里面的 `package.json` 不能删**（缺 `name`/`version` 会让插件清单模块抛
      `must declare non-empty name and version`，表现为每次请求在发出前就失败）。
 

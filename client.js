@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     const PLUGIN_VERSION = "0.3.0";
     const PLUGIN_DATE = "2026-11-18";
     // 支持的宿主：peerDependencies 声明 @deepseek-ai/dsh-app-plugin >= 0.1.7；
-    // 括号里是本机实测读数（F:\deepseekharness\resources\app.asar/package.json: name=@deepseek-ai/dsh-desktop version=0.2.2-rc.3）。
+    // 括号里是本机实测读数（宿主安装目录 app.asar/package.json: name=@deepseek-ai/dsh-desktop version=0.2.2-rc.3）。
     const SUPPORTED_DSH = "≥ 0.1.7（本机实测 0.2.2-rc.3）";
 
     const zh = {

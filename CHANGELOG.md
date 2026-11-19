@@ -65,7 +65,7 @@
 - **设置页脚注（开发信息）**：`dsh-xwide-handoff v0.2.4 · 2026-11-15` / 支持的 DeepSeek Harness `≥ 0.1.7（本机实测 0.2.2-rc.3）` / 作者 X-WIDE · B站 374064919 · xiupk@sina.com.cn / 发布页 github.com/XWIDE/dsh-xwide-handoff。样式照 `dsh-xwide-annotation` 的分区脚注（`client.js` 的 `footerStyle`）。
 
 ### 判定器
-- 语法：`F:\deepseekharness\DeepSeek Harness.exe --check index.js` / `--check client.js` → **exit 0**（两份 SHA1 与已安装副本一致）。
+- 语法：宿主可执行文件 `--check index.js` / `--check client.js` → **exit 0**（两份 SHA1 与已安装副本一致）。
 - 装载/行为：**未验** —— 改插件需重启 DSH 才装载。重启后要确认三件事：设置页出现「自动交接」勾选与阈值 90、底部脚注四行；真机跑到 90% 时是否自动产生新会话。
 
 ## 0.2.3 — 2026-10-17
