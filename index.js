@@ -485,7 +485,7 @@ async function runHandoff(ctx, config, invocation) {
     let flipNote = "";
     if (agent && typeof fastFlipInPlace === "function") {
       pendingFlip.set(sourceId, { cardText: inplaceCard, retainTokens: config.flipRetainTokens ?? 30000 });
-      flipNote = "翻篇已排队（你下一条消息触发模型请求前执行，零 LLM 毫秒级）";
+      flipNote = "翻篇将在本回合结束后立刻自动执行（百分比当场下降，零 LLM 毫秒级）";
     } else {
       flipNote = "翻篇未排队（无 agent 引用）";
     }
@@ -1416,6 +1416,34 @@ export function apply(ctx, rawConfig = {}) {
     attachAutoReady(ctx, config);
     // [dsh-fix 2026-11-19] pre-step 消费翻篇队列（官方 Waterfall 姿势：任何路径必须 return next()，
     //   翻篇只是副作用，异常一律放行请求——绝不让这一步卡住）。
+    // [dsh-fix 2026-11-19 v0.3.0] 主消费点＝agent idle（官方 turn-end 压缩同姿势：所有回合已闭合、
+    //   下一条人类消息之前）。/handoff 回合一结束立刻翻篇——百分比当场下降，且括号写在活动 turn
+    //   之外，不吞消息。fire-and-forget＋.catch（照官方 agent/status listener 形态，绝不炸状态事件）。
+    ctx.on("agent/status", (payload) => {
+      void (async () => {
+        const st = (payload && typeof payload === "object") ? payload.status : undefined;
+        if (st !== "idle") return;
+        const agentObj = (payload && payload.agent && typeof payload.agent === "object") ? payload.agent : undefined;
+        const s = agentObj && agentObj.session;
+        const sid = s && ((s.header && s.header.id) || s.id);
+        const entry = sid ? pendingFlip.get(sid) : undefined;
+        if (!entry) return;
+        pendingFlip.delete(sid);
+        const r = await fastFlipInPlace({
+          agent: agentObj,
+          session: s,
+          cardText: entry.cardText,
+          retainTokens: entry.retainTokens,
+          dbg,
+        });
+        pushNotice(sid, r.ok
+          ? `原地翻篇完成：已压 ${r.shadowed} 条（约 ${r.tokens} tokens），上下文百分比现在会下降；对话继续。`
+          : `原地翻篇未执行（${r.reason}），旧历史由宿主自动压缩在接近满时接管。`);
+      })().catch((error) => {
+        dbg(`idle翻篇降级放行：${String((error && error.message) || error)}`);
+      });
+    });
+    // 兜底消费点：idle 没赶上（如 idle 事件缺 agent 引用）时，下一条模型请求前补翻，绝不漏单。
     ctx.on("agent/pre-step", async (payload, next) => {
       try {
         const s = payload && payload.agent && payload.agent.session;
