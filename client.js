@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     const NS_SETTINGS = "dsh-xwide-handoff"; // 宿主设置命名空间 = 装载行 entry id
     // 设置页脚注（用户点名要「我的开发信息 / 版本号 / 支持的 harness 版本」）：
     // 版本号与 package.json:3 必须一字不差，发布时两处一起改。
-    const PLUGIN_VERSION = "0.2.8";
+    const PLUGIN_VERSION = "0.2.9";
     const PLUGIN_DATE = "2026-11-18";
     // 支持的宿主：peerDependencies 声明 @deepseek-ai/dsh-app-plugin >= 0.1.7；
     // 括号里是本机实测读数（F:\deepseekharness\resources\app.asar/package.json: name=@deepseek-ai/dsh-desktop version=0.2.2-rc.3）。
@@ -595,6 +595,31 @@ window.__ModuleLoader__.load({
         // 判定器入口（显示类断言用）：playwright 调它弹一条假提示，验 DOM 真在页面上。
         globalThis.__xwhNoticeTest = (pct) =>
           showNotice(`上下文到 ${pct}% 了 — 打 /${config.commandName} 可交接（自动交接已改为只提示、不建新会话）`);
+
+        // [v0.2.9] 直达播报桥：连服务端 ws（/xwide-handoff/ws/notices），pushNotice 一入队就横幅直显，
+        // 不再依赖模型转告。断线 5 秒自重连；服务端没起桥时连接失败也只是安静重试，不影响任何既有功能。
+        const openNoticeWs = () => {
+          try {
+            const proto = location.protocol === "https:" ? "wss:" : "ws:";
+            const ws = new WebSocket(`${proto}//${location.host}/xwide-handoff/ws/notices`);
+            ws.onmessage = (ev) => {
+              try {
+                const data = JSON.parse(ev.data);
+                if (data && typeof data.text === "string") showNotice(data.text);
+              } catch {}
+            };
+            ws.onclose = () => setTimeout(openNoticeWs, 5000);
+            ws.onerror = () => {
+              try {
+                ws.close();
+              } catch {}
+            };
+          } catch {}
+        };
+        openNoticeWs();
+        // 判定器入口：playwright 调它直接走横幅函数，验 DOM 真在页面上。
+        globalThis.__xwhToastTest = (t) => showNotice(String(t));
+
         setInterval(noticeScan, 5000);
         setTimeout(noticeScan, 4000);
 

@@ -484,16 +484,10 @@ async function runHandoff(ctx, config, invocation) {
     //   百分比当场下降。翻篇失败不影响卡片与命令成功（原因如实写进返回文案）。
     let flipNote = "";
     if (agent && typeof fastFlipInPlace === "function") {
-      const fr = await fastFlipInPlace({
-        agent,
-        session,
-        cardText: inplaceCard,
-        retainTokens: config.flipRetainTokens ?? 30000,
-        dbg,
-      });
-      flipNote = fr.ok ? `已翻篇 ${fr.shadowed} 条（约 ${fr.tokens} tokens，${fr.ms}ms）` : `翻篇未执行（${fr.reason}）`;
+      pendingFlip.set(sourceId, { cardText: inplaceCard, retainTokens: config.flipRetainTokens ?? 30000 });
+      flipNote = "翻篇已排队（你下一条消息触发模型请求前执行，零 LLM 毫秒级）";
     } else {
-      flipNote = "翻篇未执行（无 agent 引用）";
+      flipNote = "翻篇未排队（无 agent 引用）";
     }
     const cNote = `零 LLM 压缩，${flipNote}`;
     return { kind: "success", text: `dsh-xwide-handoff: 原地交接完成——${cNote}；卡片存档 ${inplaceFile}${inplaceErr ? `（写盘失败：${inplaceErr}）` : ""}。本会话继续，未新建会话。` };
@@ -1202,6 +1196,8 @@ const sayArmed = new Map(); // sid -> 指令被取走次数（第2次才清，�
 
 // [17a 2026-11-19] 播报队列：排定/完成时入队，模型下次请求开头念给用户（复用已验证的开口注入通道）。
 const pendingNotice = new Map(); // sid -> string[]
+// [20 v20] 直达 toast 桥：已连接的 client 视图（官方 webServer.registerUpgrade + ws）
+const noticeSends = new Set();
 const noticeArmed = new Map(); // [fix 17a-1] 播报被中途step请求吃掉(2026-11-19实测)：注入满3次才清
 // [18 2026-11-19] 从开口注入回调顺手捕获会话 agent 引用，供自动交接直调宿主 compactNow（同宿主自动压缩的轮中发起机制）
 const agentRef = new Map(); // sid -> agent
@@ -1209,6 +1205,12 @@ function pushNotice(sid, text) {
   const arr = pendingNotice.get(sid) || [];
   arr.push(text);
   pendingNotice.set(sid, arr);
+  // [20 v20] 直达弹：推给所有已连接 client 视图（模型转告通道原样保留，双通道并存）
+  for (const ws of noticeSends) {
+    try {
+      if (ws.readyState === 1) ws.send(JSON.stringify({ sid, text }));
+    } catch (_) { /* 单条推送失败忽略 */ }
+  }
 }
 
 async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
@@ -1252,23 +1254,8 @@ async function autoReadyOnce(ctx, config, sid, tokens, mode = "ready") {
     //   18d 的 realm compactNow 路线被否（单槽引擎＝分钟级排队，实测 4 分+不返回）。本刀换 fastFlipInPlace：
     //   官方 4 事件同步批把老历史 shadow 掉、摘要＝刚落的交接卡，零 LLM、毫秒级，百分比立刻下降。详见 flip.js。
     if (config.inPlace) {
-      const agent = agentRef.get(sid);
-      if (!agent) {
-        dbg(`${tag}翻篇跳过：没有 agent 引用（开口注入未捕获到）`);
-      } else {
-        const r = await fastFlipInPlace({
-          agent,
-          session,
-          cardText: card,
-          retainTokens: config.flipRetainTokens ?? 30000,
-          dbg,
-        });
-        if (r.ok) {
-          pushNotice(sid, `原地翻篇完成：已压 ${r.shadowed} 条（约 ${r.tokens} tokens），上下文百分比现在会下降；对话继续。`);
-        } else {
-          pushNotice(sid, `自动交接卡片已落盘；原地翻篇未执行（${r.reason}），旧历史由宿主自动压缩在接近满时接管。`);
-        }
-      }
+      pendingFlip.set(sid, { cardText: card, retainTokens: config.flipRetainTokens ?? 30000 });
+      pushNotice(sid, "原地翻篇已排队：你下一条消息触发模型请求前执行，百分比随即下降。");
     }
   } catch (error) {
     dbg(`${tag}失败(写卡) ${sid}：${String((error && error.message) || error)}`);
@@ -1382,6 +1369,11 @@ export const Config = await (async () => {
   }
 })();
 
+// [dsh-fix 2026-11-19] 翻篇推迟闸：/handoff 的翻篇不在命令当口写——开着 turn 写压缩括号会让
+//   宿主吞掉交接后第一条消息（用户原话「现在还是会出现要打两次对话」）。照官方 force-compact
+//   姿势挂 agent/pre-step：下一条消息触发模型请求前才执行翻篇（官方语义＝压缩必须在 turn 内）。
+const pendingFlip = new Map(); // sid -> { cardText, retainTokens }
+
 export function apply(ctx, rawConfig = {}) {
   const config = cfg(rawConfig);
   if (!config.enabled) {
@@ -1397,9 +1389,56 @@ export function apply(ctx, rawConfig = {}) {
   } catch (error) {
     console.log(`[xwide-handoff] settings.configure 声明失败（仅外观）：${(error && error.message) || error}`);
   }
+  // [20 v20] 直达 toast 桥：官方 webServer.registerUpgrade + ws（样本 dsh-better-sidebar index.js:10472-10484）。
+  //   动态 import ws＝包缺失只是没有弹条，播报退化为原模型转告通道，绝不炸启动。
+  import("ws").then(({ WebSocketServer }) => {
+    try {
+      const wss = new WebSocketServer({ noServer: true });
+      ctx.inject(["webServer"], (child) => {
+        child.effect(() => child.webServer.registerUpgrade({
+          path: "/xwide-handoff/ws/notices",
+          handler: (req, socket, head) => {
+            wss.handleUpgrade(req, socket, head, (ws) => {
+              noticeSends.add(ws);
+              ws.on("close", () => noticeSends.delete(ws));
+              ws.on("error", () => noticeSends.delete(ws));
+            });
+          },
+        }), "dsh-xwide-handoff notice toast ws");
+      });
+      dbg("toast桥：webServer 注册成功");
+    } catch (error) {
+      dbg(`toast桥注册失败：${String((error && error.message) || error)}`);
+    }
+  }, () => dbg("toast桥：ws 包不可用，播报仅走模型转告通道"));
   try {
     attachSelfHeal(ctx, config);
     attachAutoReady(ctx, config);
+    // [dsh-fix 2026-11-19] pre-step 消费翻篇队列（官方 Waterfall 姿势：任何路径必须 return next()，
+    //   翻篇只是副作用，异常一律放行请求——绝不让这一步卡住）。
+    ctx.on("agent/pre-step", async (payload, next) => {
+      try {
+        const s = payload && payload.agent && payload.agent.session;
+        const sid = s && ((s.header && s.header.id) || s.id);
+        const entry = sid ? pendingFlip.get(sid) : undefined;
+        if (entry) {
+          pendingFlip.delete(sid);
+          const r = await fastFlipInPlace({
+            agent: payload.agent,
+            session: s,
+            cardText: entry.cardText,
+            retainTokens: entry.retainTokens,
+            dbg,
+          });
+          pushNotice(sid, r.ok
+            ? `原地翻篇完成：已压 ${r.shadowed} 条（约 ${r.tokens} tokens），上下文百分比现在会下降；对话继续。`
+            : `原地翻篇未执行（${r.reason}），旧历史由宿主自动压缩在接近满时接管。`);
+        }
+      } catch (error) {
+        dbg(`pre-step翻篇降级放行：${String((error && error.message) || error)}`);
+      }
+      return await next();
+    });
     ctx.effect(
       function* () {
         const active = new Set();
