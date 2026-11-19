@@ -100,11 +100,11 @@ function cfg(config) {
     // 用户 2026-11-18 点名要保留：「原地交接」要——勾上后手动 /handoff 只原地压缩＋卡片落盘，不建新对话。
     inPlace: c.inPlace === true,
     showCard: c.showCard !== false,
-    // 阈值允许 50%–95%（用户 2026-11-15 定：可配置输入框，默认 90），越界一律夹回边界。
+    // 阈值允许 15%–95%（用户 2026-11-15 定可配置；2026-11-19 点名放开下限到 15 以支持 40% 提前交接），越界夹回边界。
     autoHandoffPct: (() => {
       const p = Number(c.autoHandoffPct);
       if (!Number.isFinite(p) || p <= 0 || p >= 1) return 0.9;
-      return Math.min(0.95, Math.max(0.5, p));
+      return Math.min(0.95, Math.max(0.15, p));
     })(),
     readyCooldownMs: Number(c.readyCooldownMs) >= 0 ? Number(c.readyCooldownMs) : 600000,
     contextWindow: Number(c.contextWindow) > 1000 ? Number(c.contextWindow) : 262144,
