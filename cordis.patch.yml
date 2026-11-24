@@ -9,6 +9,7 @@
       name: dsh-xwide-handoff
       config:
         enabled: true
+        floatingButton: true
         commandName: handoff
         # [2026-10-13 实测改 create] 本机 262K 窗口长期稳定路径：服务端直接建会话 + 命名 + 置顶
         # （_06/_07 两份交接卡就是这条做的）。none = 由浏览器半用 GUI「新建对话」API 建会话，
@@ -27,6 +28,6 @@
         keepFork: false                 # 仅 childMode: fork 有意义
         # A 半自动：到阈值自动把新会话备好（建好/命名/置顶/注入卡片），不替你切会话。
         autoReady: true
-        readyPct: 0.7                   # inputTokens ÷ contextWindow ≥ 该比例时触发
+        readyPct: 0.5                   # 2026-11-08 速度减配：0.7→0.5（尺子实测：冷读 112.8 tok/s、前缀缓存命中省 96.2%、total_slots=1 串行；0.7＝183k tokens 冷读≈27 分钟才备新会话；GUARD-CONFIRMED 用户「做」）
         readyCooldownMs: 600000         # 两次自动备好的最小间隔（10 分钟）
-        contextWindow: 262144           # 模型窗口（tokens）
+        contextWindow: 131072           # 模型窗口（tokens）；对齐引擎 --max-context 131072（2026-11-19 修：原 262144 导致压缩触发线永远到不了）

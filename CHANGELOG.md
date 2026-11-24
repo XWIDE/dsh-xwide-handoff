@@ -2,41 +2,17 @@
 
 本文件记录 `dsh-xwide-handoff` 的可见变更。日期为本地时间。
 
-## 0.3.2 — 2026-11-19
+## 0.3.3 — 2026-11-24
 
-### 修复
-- **★npm 包缺件崩溃：`files` 清单漏了 `flip.js`，而 `index.js` 直接 `import "./flip.js"`——从插件市场（npm）安装的用户装载即报错。** 本地 local-plugins 目录一直有这份文件所以本机从没暴露。已补进打包清单。
-- **★翻篇写坏会话（砖化级）：`compaction/start|end` 的 `turn` 键此前在无轮次时被整个省略，违反会话格式 v4 必填约束 → 下次加载抛 `SessionFormatError: compaction turn must be a non-negative safe integer`，整个会话打不开（2026-11-19 session-d8838407 事故根因）。** 现在无轮次显式写 `null`，并改用 `Number.isSafeInteger` 严格校验 turn/start。
-- **翻篇选区吞掉受保护系统提示：选区若覆盖 surface 首节点（系统提示），宿主 worker 加载时直接拒绝（"compaction cannot shadow the protected system head"），表现为原地交接反复 no-region 失败。** 现在自动让开首节点重算边界；让不开则明确跳过并报 `protected-head`，不再硬写。
-- **「取消勾选原地交接仍然原地」：配置在装载时被一次性解引用成快照，设置页之后的改动只落盘不进运行进程，必须重启才生效。** 现在保留宿主传入的 live 引用，在每次交接决策前（排定文案、定时器开火、自动分叉、手动命令共 6 处）重新解引用——勾选/取消即时生效，无需重启。
-- **自动交接不读「原地交接」勾选：此前自动路径文案与执行都写死原地，用户取消勾选后仍原地压。** 现在按勾分叉：勾了＝原地落卡＋排队翻篇；没勾＝执行一次真正的 /handoff（按 childMode 建新会话，即老方法向外交接）。
-- 设置页页脚版本号常量与 package.json 对齐（0.3.1 发布时漏同步，显示停留在 0.3.0）。
+### 新增
+- **★悬浮快速调节按钮（用户点名）。** 设置页「交接行为」红框那组（上下文阈值提醒 / 自动交接 / 原地交接 / 交接后显示交接卡 四勾选＋自动交接阈值% / 触发阈值% 两输入）搬到一个常驻界面右下角的**可拖动小圆钮**上：自绘深蓝圆角图标（旧会话框→箭头→新会话点，与页脚 logo 同色系），点开即弹快速调节面板，改动即时写入设置、与设置页双向同步。位置随手拖（位移 >5px 记为拖动、否则算点击展开），松开自动存进 `localStorage.xwh.fab.pos`，重载/换窗口夹回视口不丢失。
+- **设置页新增「显示悬浮调节按钮」开关**（`floatingButton`，**默认勾上＝显示**）；取消勾选当场隐藏按钮与面板（订阅 scope，无需重启）。
+- **两层语义纠正（用户 2026-11-24 点名「停用整个插件 和 显示浮动面板 是两个功能」）**：`启用插件`＝总闸，关掉时浮动按钮一并隐藏（不再各管各的、按钮赖屏不走）；`显示悬浮调节按钮`＝插件开着时单独控制这个钮显隐。可见性判定 `enabled!==false && floatingButton!==false`。
 
-### 变更
-- 翻篇失败原因码细化：`no-boundary` / `no-region` / `protected-head` 分别可辨，便于从日志定位。
-
-
-
-### 修复
-- **★手动交接后几分钟，自动交接又补一发（连环触发）。** 现象（盘上审计当日 10 张卡）：16:08 手动落卡 → 16:11 自动又落一张（3分42秒）；13:29→13:30 同理。根因：冷却时间 `lastAt` 是自动 watcher 的私有变量，只在自动触发时写；手动 `/handoff` 命令路径从不写它 → 手动交接完环仍在阈值上方，auto 几分钟后补发。修法：新增模块级共享状态 `lastHandoffAt`（会话→最近交接时间），手动落卡处写入，自动两条冷却闸改取 `Math.max(私有, 共享)`——手动交接后 10 分钟内自动交接静默。
-- **判定器实测通过（2026-11-19）**：①正式档：手动 /handoff 后 10 分钟零 `-auto-` 卡，环当场掉到 28%（目标 ~30%）；②加速档（60s 冷却/25% 阈值）：手动后聊两轮，调试日志出现「冷却中，跳过」＝共享冷却闸开火直接留痕。
-
-## 0.3.0 — 2026-11-19
-
-### 修复
-- **★原地交接后第一条消息被吞（要发两次才回复）。** 现象（用户报障）：`/handoff` 完成后发的第一条普通消息没有回复，敲第二条才醒。根因（读官方引擎注释实锤）：翻篇是在 `/handoff` 自己这个活动回合里当场写压缩括号的，这种括号绝不能横跨/嵌进活动回合边界——写完宿主状态机没归位。修法：`/handoff` 卡片照写、播报照发，翻篇改挂官方 `agent/status` 的 **idle 瞬间**消费（与官方 turn-end 强制压缩同一挂载点：所有回合已闭合、下一条人类消息之前），`agent/pre-step` 留兜底防漏单（任何异常放行请求，绝不卡步骤）。括号写在活动回合之外 → 不吞消息；翻篇仍是零 LLM 毫秒级。
-- 中间版本 0.2.9（翻篇排队到 pre-step）能修吞消息但百分比不当场降（要等下一条消息触发），被 0.3.0 的 idle 方案取代。
-
-### 行为变更
-- **交接完百分比当场下降。** 翻篇在 `/handoff` 回合一闭合就执行，用户在发下一条消息之前就能看到上下文占比掉下来；弹条同步播报「原地翻篇完成：已压 N 条」。
-
-### 判定器（用户实测通过）
-- 重启后跑 `/handoff`：不发任何消息，百分比当场降 ✓（日志 `翻篇完成 shadow=43 tokens=26063 用时ms=91`，零降级行）。
-- 交接后第一条普通消息直接有回复 ✓（不再打两次）。
-- 手动/自动交接卡片与 ~20s 流程零改动 ✓。
-
-### 维护
-- 调试日志路径从个人工作区硬编码改为 `~/.dsh/_xwh_debug.log`（发布包内不再含个人机器路径）。
+### 判定器
+- 语法：`client.js` `node --check` 退出码 0。
+- DOM（显示类硬线）：playwright 断言 `#xwh-fab` 存在且 `offsetParent!==null && getBoundingClientRect().height>0`；`__xwhFabTest()` 返回 true。
+- 未验：跨浏览器/多窗口位置存档共享（本机单窗口实测）。
 
 ## 0.2.8 — 2026-11-18
 
@@ -84,13 +60,13 @@
 - **设置页脚注（开发信息）**：`dsh-xwide-handoff v0.2.4 · 2026-11-15` / 支持的 DeepSeek Harness `≥ 0.1.7（本机实测 0.2.2-rc.3）` / 作者 X-WIDE · B站 374064919 · xiupk@sina.com.cn / 发布页 github.com/XWIDE/dsh-xwide-handoff。样式照 `dsh-xwide-annotation` 的分区脚注（`client.js` 的 `footerStyle`）。
 
 ### 判定器
-- 语法：宿主可执行文件 `--check index.js` / `--check client.js` → **exit 0**（两份 SHA1 与已安装副本一致）。
+- 语法：`F:\deepseekharness\DeepSeek Harness.exe --check index.js` / `--check client.js` → **exit 0**（两份 SHA1 与已安装副本一致）。
 - 装载/行为：**未验** —— 改插件需重启 DSH 才装载。重启后要确认三件事：设置页出现「自动交接」勾选与阈值 90、底部脚注四行；真机跑到 90% 时是否自动产生新会话。
 
 ## 0.2.3 — 2026-10-17
 
 ### 修复
-- **★交接卡序号不再全局共用一个计数器，改为按项目分组各自计数。** 现象：新开项目的**第一张**交接卡标题直接叫 `_32`（本机实测 `Strata0.145机器模型升级提升评估_32`）。根因：序号的桶键是**工作目录**（调用处原为 `claimSeq(config.counterFile, cwdKey)`），而 `dsh-project-groups` 把所有项目的工作目录都落在同一个基工作区（注入的 project-context 原话 "all projects' workspace directories fall into a single base workspace"）→ 所有项目共用同一个基工作区这一个桶，`~\.dsh\xwide-handoff-counter.json` 里该桶已计到 32。
+- **★交接卡序号不再全局共用一个计数器，改为按项目分组各自计数。** 现象：新开项目的**第一张**交接卡标题直接叫 `_32`（本机实测 `Strata0.145机器模型升级提升评估_32`）。根因：序号的桶键是**工作目录**（调用处原为 `claimSeq(config.counterFile, cwdKey)`），而 `dsh-project-groups` 把所有项目的工作目录都落在同一个基工作区（注入的 project-context 原话 "all projects' workspace directories fall into a single base workspace"）→ 所有项目共用 `"...\default-workspace"` 这一个桶，`~\.dsh\xwide-handoff-counter.json` 里该桶已计到 32。
 - **修法**：新增 `resolveBucketKey(ctx, sourceId, cwdKey)`（`index.js:159`），取数通道与下方「归入项目分组」块同源（`ctx.get("projectController").baseline()` → `assignments[sessionId] = projectId`）。已分组 → 桶键 `proj:<projectId>#<项目名>`，**新项目首张卡从 `_01` 起**；未分组 / 服务不可用 / 任何异常 → 退回 cwd 键＝旧行为，老会话不断号。`/handoff` 回执同步标明分桶依据（`index.js:867`）。
 
 ### 判定器（三层全绿）

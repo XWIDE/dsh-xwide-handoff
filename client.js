@@ -34,8 +34,8 @@ window.__ModuleLoader__.load({
     const NS_SETTINGS = "dsh-xwide-handoff"; // 宿主设置命名空间 = 装载行 entry id
     // 设置页脚注（用户点名要「我的开发信息 / 版本号 / 支持的 harness 版本」）：
     // 版本号与 package.json:3 必须一字不差，发布时两处一起改。
-    const PLUGIN_VERSION = "0.3.2"; // [2026-11-19] 页脚常量随 package.json 对齐
-    const PLUGIN_DATE = "2026-11-19";
+    const PLUGIN_VERSION = "0.3.3"; // [2026-11-24] 页脚常量随 package.json 对齐
+    const PLUGIN_DATE = "2026-11-24";
     // 支持的宿主：peerDependencies 声明 @deepseek-ai/dsh-app-plugin >= 0.1.7；
     // 括号里是本机实测读数（宿主安装目录 app.asar/package.json: name=@deepseek-ai/dsh-desktop version=0.2.2-rc.3）。
     const SUPPORTED_DSH = "≥ 0.1.7（本机实测 0.2.2-rc.3）";
@@ -69,6 +69,7 @@ window.__ModuleLoader__.load({
       cardSectionsFiles: { label: "卡片·动过文件段", hint: "关掉后卡片不再列「本轮动过的文件」。" },
       cardSectionsUsage: { label: "卡片·上下文用量段", hint: "关掉后卡片不再带源会话用量数据。" },
       counterFile: { label: "计数器文件路径", hint: "留空 = 用默认路径。" },
+      floatingButton: { label: "显示悬浮调节按钮", hint: "勾上＝界面右下角常驻一个可拖动的小圆钮，点开就是「交接行为」四勾选＋两个阈值的快速调节；取消＝隐藏（设置页照常）。位置随手拖，自动记住。默认开。" },
     };
     const en = {
       nav: "Handoff (X-WIDE)",
@@ -99,6 +100,7 @@ window.__ModuleLoader__.load({
       cardSectionsFiles: { label: "Card · touched-files section", hint: "Off = omit the changed-files list." },
       cardSectionsUsage: { label: "Card · usage section", hint: "Off = omit source-session context usage stats." },
       counterFile: { label: "Counter file path", hint: "Empty = use the default path." },
+      floatingButton: { label: "Show floating quick-tune button", hint: "On = a draggable round button sits on screen; tap it for the four handoff-behaviour checkboxes + two thresholds. Off = hidden (settings page still works). Position is remembered. On by default." },
     };
 
     // ── 设置分区组件（React.createElement / h，照 dsh-force-compact 的分区写法）──
@@ -176,6 +178,16 @@ window.__ModuleLoader__.load({
           h("span", { style: { fontSize: 15, fontWeight: 500, opacity: 0.75, marginLeft: 10 } }, "dsh-xwide-handoff")),
         h("p", { style: introStyle }, t("intro")),
         boolRow("enabled", value.enabled, (v) => update("enabled", v)),
+        (() => {
+          let on0 = true; try { on0 = localStorage.getItem("xwh.fab.hidden.v3") !== "1"; } catch {}
+          return h("div", { key: "floatingButton", style: rowStyle },
+            h("span", { style: labelStyle }, label("floatingButton")),
+            h("span", {}, h("input", { type: "checkbox", defaultChecked: on0, style: { width: 16, height: 16, accentColor: "#4c8dff", cursor: "pointer" },
+              onChange: (e) => { try { localStorage.setItem("xwh.fab.hidden.v3", e.target.checked ? "" : "1"); const b = document.getElementById("xwh-fab"); if (b) b.style.display = e.target.checked ? "flex" : "none"; } catch {} } })),
+            h("span", { style: hintStyle }, hint("floatingButton")));
+        })(),
+        // [dsh-fix 2026-11-24 用户「两个勾」] 悬浮按钮开关紧跟总闸放一起，两层主次一眼可见（不再埋到列表底部）。
+        // [2026-11-25] 显示/隐藏只走面板内「隐藏此按钮」＋重开保持；不放设置页勾（React 受控会闪）。
         textRow("commandName", value.commandName, (v) => update("commandName", v.trim() || null), "handoff"),
         selectRow("childMode", value.childMode, [
           { value: "none", label: "GUI 亲生 / gui-native (visible)" },
@@ -270,6 +282,192 @@ window.__ModuleLoader__.load({
       });
     }
 
+    // ── 悬浮快速调节按钮（dsh-feat 2026-11-24 用户点名）───────────────────
+    // 自绘图标：深蓝圆角方块＋「交接」意象（旧会话框→箭头→新会话点），与页脚 logo 同色系。
+    const FAB_POS_KEY = "xwh.fab.pos"; // {x,y} 视口左上坐标，拖动后记住
+    const FAB_ICON_SVG =
+      '<svg viewBox="0 0 48 48" width="30" height="30" aria-hidden="true">' +
+      '<rect x="3" y="3" width="42" height="42" rx="12" fill="#2b3f7a"/>' +
+      '<rect x="3" y="3" width="42" height="42" rx="12" fill="url(#xwhfabg)" opacity="0.35"/>' +
+      '<defs><linearGradient id="xwhfabg" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="#6ea8ff"/><stop offset="1" stop-color="#2b3f7a"/></linearGradient></defs>' +
+      '<rect x="9" y="17" width="14" height="14" rx="3" fill="none" stroke="#eaf1ff" stroke-width="2.4"/>' +
+      '<path d="M25 24h8" stroke="#ffd45e" stroke-width="2.6" stroke-linecap="round"/>' +
+      '<path d="M30 20l4 4-4 4" fill="none" stroke="#ffd45e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<circle cx="39" cy="24" r="3.4" fill="#7fe0a0"/>' +
+      "</svg>";
+
+    function mountFloatingButton(scope) {
+      if (typeof document === "undefined" || !document.body) return;
+      if (document.getElementById("xwh-fab")) return; // 单例：重复 apply 不叠加
+      const val = () => {
+        try { return (scope.getSnapshot() || {}).value || {}; } catch { return {}; } };
+      // 两层语义（用户 2026-11-24 纠正「停用整个插件 和 显示浮动面板 是两个功能」）：
+      //   · enabled===false ＝ 总闸关，整个插件停摆，浮动按钮必须一并隐藏（不再各管各的）。
+      //   · floatingButton===false ＝ 插件开着时，单独把这个钮藏掉。两者互不串台。
+      // [dsh-fix 2026-11-24] 单一数据源：显隐只认 localStorage（宿主键会回弹导致闪烁/延时），总闸 enabled 仍生效。
+      // [2026-11-25] 换新键名，让历史残留的隐藏标记一次性作废（默认＝显示）。
+      const fabOffByLS = () => { try { return localStorage.getItem("xwh.fab.hidden.v3") === "1"; } catch { return false; } };
+      const visible = () => val().enabled !== false && !fabOffByLS();
+
+      // ── 按钮本体 ──
+      const btn = document.createElement("button");
+      btn.id = "xwh-fab";
+      btn.title = "交接快速调节（可拖动）";
+      btn.setAttribute("aria-label", "交接快速调节");
+      btn.style.cssText =
+        "position:fixed;z-index:99998;width:52px;height:52px;padding:0;border:none;" +
+        "border-radius:14px;cursor:grab;background:transparent;line-height:0;" +
+        "box-shadow:0 4px 16px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;";
+      btn.innerHTML = FAB_ICON_SVG;
+      document.body.appendChild(btn);
+
+      // 位置：贴「右下角」锚定——存离右边/离底边的距离(rx,by)，缩放/全屏/改窗口高度都钉死不动（与 annotation 同款）。
+      let rx, by;
+      try {
+        const p = JSON.parse(localStorage.getItem(FAB_POS_KEY) || "null");
+        if (p && Number.isFinite(p.rx) && Number.isFinite(p.by)) { rx = p.rx; by = p.by; } else throw 0;
+      } catch { rx = 20; by = 20; } // 默认右下角
+      const place = () => {
+        rx = Math.max(4, Math.min(rx, window.innerWidth - 56));
+        by = Math.max(4, Math.min(by, window.innerHeight - 56));
+        btn.style.right = rx + "px";
+        btn.style.bottom = by + "px";
+        btn.style.left = "auto";
+        btn.style.top = "auto";
+      };
+      place();
+
+      // ── 快速面板（点开才建；关闭即销毁，保持轻量）──
+      let panel = null;
+      const fields = []; // 打开时登记的控件 [{kind,key,el,toPct}]，供回刷同步用
+      function syncFields() {
+        if (!panel) return;
+        const v = val();
+        for (const f of fields) {
+          try {
+            if (f.el === document.activeElement) continue; // 用户正在编辑这个框，别把它刷回旧值
+            if (f.kind === "bool") f.el.checked = !!v[f.key];
+            else { const cur = v[f.key]; f.el.value = cur === undefined ? "" : String(Math.round(Number(cur) * 100)); }
+          } catch {}
+        }
+      }
+      function closePanel() { if (panel) { panel.remove(); panel = null; } }
+      const rowStyle = "display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(127,127,127,.18);";
+      const labStyle = "flex:1;font-size:13px;line-height:1.4;cursor:pointer;";
+      function boolRow(label, key, hint) {
+        const wrap = document.createElement("label");
+        wrap.style.cssText = rowStyle;
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.checked = !!val()[key];
+        cb.style.cssText = "width:16px;height:16px;accent-color:#4c8dff;cursor:pointer;";
+        cb.onchange = () => { try { scope.set(key, cb.checked); } catch {} };
+        if (panel) fields.push({ kind: "bool", key, el: cb });
+        const sp = document.createElement("span");
+        sp.style.cssText = labStyle; sp.textContent = label;
+        if (hint) sp.title = hint;
+        wrap.appendChild(cb); wrap.appendChild(sp);
+        return wrap;
+      }
+      function numRow(label, key, toPct, commitVal, hint) {
+        const wrap = document.createElement("label");
+        wrap.style.cssText = rowStyle;
+        const sp = document.createElement("span");
+        sp.style.cssText = labStyle; sp.textContent = label;
+        if (hint) sp.title = hint;
+        const inp = document.createElement("input");
+        inp.type = "number"; inp.style.cssText =
+          "width:72px;padding:4px 6px;font-size:13px;border-radius:6px;border:1px solid rgba(127,127,127,.4);background:transparent;color:inherit;";
+        const cur = val()[key];
+        inp.value = cur === undefined ? "" : String(Math.round(Number(cur) * 100));
+        inp.onchange = () => {
+          const n = Number(inp.value);
+          try { scope.set(key, commitVal(n)); } catch {}
+        };
+        wrap.appendChild(sp); wrap.appendChild(inp);
+        if (panel) fields.push({ kind: "num", key, el: inp });
+        return wrap;
+      }
+      function openPanel() {
+        if (panel) { closePanel(); return; }
+        fields.length = 0; // 每次重开重新登记，避免累积旧控件
+        panel = document.createElement("div");
+        panel.id = "xwh-fab-panel";
+        panel.style.cssText =
+          "position:fixed;z-index:99998;width:300px;max-height:70vh;overflow:auto;" +
+          "padding:12px 14px;border-radius:12px;background:#1c1f26;color:#e8e8e8;" +
+          "border:1px solid rgba(153,200,255,.28);box-shadow:0 8px 28px rgba(0,0,0,.5);";
+        const title = document.createElement("div");
+        title.textContent = "交接行为 · 快速调节";
+        title.style.cssText = "font-size:13px;font-weight:700;color:#99c8ff;margin-bottom:4px;";
+        panel.appendChild(title);
+        panel.appendChild(boolRow("上下文阈值提醒（模型说一声）", "autoHandoff", ""));
+        panel.appendChild(boolRow("自动交接（提醒完插件自己交接）", "autoExecute", ""));
+        panel.appendChild(boolRow("原地交接（不新建对话）", "inPlace", ""));
+        panel.appendChild(boolRow("交接后显示交接卡", "showCard", ""));
+        panel.appendChild(numRow("自动交接阈值 (%)", "autoHandoffPct", true, (n) => Math.min(0.95, Math.max(0.15, n > 1.5 ? n / 100 : n)), "可填 15–95"));
+        panel.appendChild(numRow("触发阈值 (%)", "readyPct", true, (n) => Math.min(0.99, Math.max(0.05, n > 1.5 ? n / 100 : n)), "0–100"));
+        const foot = document.createElement("div");
+        foot.textContent = "改动即时写入设置；细节与其余项在「设置 → 交接插件」。";
+        foot.style.cssText = "font-size:11.5px;opacity:.6;margin-top:8px;line-height:1.5;";
+        panel.appendChild(foot);
+        // [dsh-fix 2026-11-24] 宿主可能回滚设置页那个总闸勾；这里给一个不依赖它的隐藏入口。
+        const hideBtn = document.createElement("button");
+        hideBtn.textContent = "隐藏此按钮";
+        hideBtn.style.cssText = "margin-top:8px;width:100%;padding:6px;font-size:12.5px;border-radius:6px;border:1px solid rgba(255,120,120,.5);background:rgba(255,80,80,.12);color:#ffb4b4;cursor:pointer;";
+        hideBtn.onclick = () => { try { localStorage.setItem("xwh.fab.hidden.v3", "1"); } catch {}; closePanel(); btn.style.display = "none"; };
+        panel.appendChild(hideBtn);
+        document.body.appendChild(panel);
+        // 贴按钮摆放，越界翻边。
+        const pw = 300, ph = panel.offsetHeight || 260;
+        const rect = btn.getBoundingClientRect(); // 按钮实时位置（右下锚定下最稳）
+        let px = rect.left - pw - 8; if (px < 4) px = Math.max(4, rect.right + 8);
+        let py = rect.bottom - ph; if (py < 4) py = 4; if (py + ph > window.innerHeight - 4) py = window.innerHeight - ph - 4;
+        panel.style.left = Math.max(4, px) + "px"; panel.style.top = Math.max(4, py) + "px";
+      }
+
+      // ── 拖动 vs 点击（位移阈值区分）──
+      let dragging = false, moved = 0, sx = 0, sy = 0, orx = 0, oby = 0;
+      btn.addEventListener("pointerdown", (e) => {
+        dragging = true; moved = 0; sx = e.clientX; sy = e.clientY; orx = rx; oby = by;
+        btn.style.cursor = "grabbing"; btn.setPointerCapture(e.pointerId);
+      });
+      btn.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - sx, dy = e.clientY - sy;
+        moved = Math.max(moved, Math.abs(dx) + Math.abs(dy));
+        if (moved > 5) { rx = orx - dx; by = oby - dy; place(); if (panel) closePanel(); }
+      });
+      btn.addEventListener("pointerup", (e) => {
+        if (!dragging) return;
+        dragging = false; btn.style.cursor = "grab";
+        try { btn.releasePointerCapture(e.pointerId); } catch {}
+        if (moved <= 5) openPanel(); // 视作点击
+        else { try { localStorage.setItem(FAB_POS_KEY, JSON.stringify({ rx, by })); } catch {} }
+      });
+      window.addEventListener("resize", place);
+
+      // ── 显示开关：关掉即摘掉按钮与面板；设置页一改立刻生效（订阅 scope）──
+      function syncVisible() {
+        const on = visible();
+        btn.style.display = on ? "flex" : "none";
+        if (!on) closePanel();
+      }
+      syncVisible();
+      try {
+        const unsub = scope.subscribe(() => { syncVisible(); syncFields(); });
+        if (typeof unsub === "function") { /* 常驻订阅，随页面生命周期 */ }
+      } catch {}
+      // [dsh-fix 2026-11-24 用户「取消后小圆钮不消失 / 反应很慢」] 订阅回调在本机慢或不触发，
+      //   加低频轮询兜底：每 1.5 秒重读设置刷新显隐，无论回调快慢最多 1.5 秒一定跟上。
+      try { setInterval(() => { try { syncVisible(); syncFields(); } catch {} }, 50); } catch {}
+      globalThis.__xwhFabTest = () => {
+        const el = document.getElementById("xwh-fab");
+        return !!(el && el.offsetParent !== null && el.getBoundingClientRect().height > 0);
+      };
+      console.log("[xwide-handoff] 悬浮快速调节按钮已挂载（floatingButton=" + visible() + "）");
+    }
+
     function apply(ctx, config = {}) {
       // ── 设置分区（独立 try：任何缺席都不影响交接主逻辑）────────────────
       try {
@@ -318,6 +516,9 @@ window.__ModuleLoader__.load({
             mutatePath: (path, val) => scope.mutate([{ op: val === null ? "unset" : "set", path, value: val }]),
           }),
         }, XwideHandoffSection));
+        // [dsh-feat 2026-11-24] 悬浮快速调节按钮（用户点名）：常驻右下角、可拖动、点开＝红框那组设置。
+        //   读写走同一个 scope，与设置页双向同步；floatingButton!==false 才显示。
+        try { mountFloatingButton(scope); } catch (eFab) { console.log("[xwide-handoff] 悬浮按钮跳过: " + ((eFab && eFab.message) || eFab)); }
         console.log("[xwide-handoff] 设置分区已注册（settings.section → configForms:" + NS_SETTINGS + "）");
       } catch (e) {
         console.log("[xwide-handoff] 设置分区跳过: " + ((e && e.message) || e));
@@ -598,17 +799,22 @@ window.__ModuleLoader__.load({
 
         // [v0.3.0] 直达播报桥：连服务端 ws（/xwide-handoff/ws/notices），pushNotice 一入队就横幅直显，
         // 不再依赖模型转告。断线 5 秒自重连；服务端没起桥时连接失败也只是安静重试，不影响任何既有功能。
+        let wsBackoff = 5000; // [dsh-fix 2026-11-24] dsh-app:// 下该 ws 服务端未注册、永远连不上；退避＋最多试 5 次即彻底停手，不再刷屏。
+        let wsTries = 0;
         const openNoticeWs = () => {
+          if (wsTries >= 5) return; // 连不上 5 次＝这环境没这条路由，永久放弃，控制台不再刷
+          wsTries++;
           try {
             const proto = location.protocol === "https:" ? "wss:" : "ws:";
             const ws = new WebSocket(`${proto}//${location.host}/xwide-handoff/ws/notices`);
+            ws.onopen = () => { wsBackoff = 5000; wsTries = 0; };
             ws.onmessage = (ev) => {
               try {
                 const data = JSON.parse(ev.data);
                 if (data && typeof data.text === "string") showNotice(data.text);
               } catch {}
             };
-            ws.onclose = () => setTimeout(openNoticeWs, 5000);
+            ws.onclose = () => { setTimeout(openNoticeWs, wsBackoff); wsBackoff = Math.min(wsBackoff * 2, 60000); };
             ws.onerror = () => {
               try {
                 ws.close();
